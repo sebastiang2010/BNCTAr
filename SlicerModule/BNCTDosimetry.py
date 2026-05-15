@@ -91,6 +91,26 @@ class BNCTDosimetryWidget(ScriptedLoadableModuleWidget):
         self.offsetZ.value = 0.0
         parametersFormLayout.addRow("Offset Z (mm):", self.offsetZ)
 
+        # --- Sección de campos múltiples ---
+        self.fieldCountCombo = qt.QComboBox()
+        self.fieldCountCombo.addItems(["1 Campo", "2 Campos"])
+        parametersFormLayout.addRow("Campos:", self.fieldCountCombo)
+
+        self.peso1Spin = qt.QDoubleSpinBox()
+        self.peso1Spin.setRange(0, 100)
+        self.peso1Spin.setDecimals(4)
+        self.peso1Spin.value = 1.0
+        parametersFormLayout.addRow("Peso Campo 1:", self.peso1Spin)
+
+        self.peso2Spin = qt.QDoubleSpinBox()
+        self.peso2Spin.setRange(0, 100)
+        self.peso2Spin.setDecimals(4)
+        self.peso2Spin.value = 1.0
+        self.peso2Spin.visible = False
+        parametersFormLayout.addRow("Peso Campo 2:", self.peso2Spin)
+
+        self.fieldCountCombo.connect('currentIndexChanged(int)', self._onFieldCountChanged)
+
         # Botón para interpolar dosis
         self.applyButton = qt.QPushButton("Interpolar Dosis")
         self.applyButton.toolTip = "Alinea centros, carga los archivos y genera el volumen de dosis en Slicer."
@@ -223,6 +243,10 @@ class BNCTDosimetryWidget(ScriptedLoadableModuleWidget):
             self.offsetY.value = offset[1]
             self.offsetZ.value = offset[2]
             logging.info(f"Auto-centrado: offset={offset}")
+
+    def _onFieldCountChanged(self, idx):
+        """Muestra/oculta peso del campo 2 segun seleccion."""
+        self.peso2Spin.visible = (idx == 1)  # 1 = "2 Campos"
 
     def _loadDefaultConfig(self):
         jsonc_path = os.path.join(os.path.dirname(__file__), '..', 'json', 'organ_config.jsonc')
@@ -441,7 +465,20 @@ class BNCTDosimetryWidget(ScriptedLoadableModuleWidget):
         
         try:
             qt.QApplication.setOverrideCursor(qt.Qt.WaitCursor)
-            logic.run(n_files, g_path, refNode, rbe_factors)
+            logic._cleanupOldVolumes()
+            # Campo 1
+            logic.run(n_files, g_path, refNode, rbe_factors, suffix="")
+            # Campo 2 si esta seleccionado
+            if self.fieldCountCombo.currentIndex == 1:
+                dir_c2 = os.path.join(phitsDir, "campo_2")
+                if os.path.isdir(dir_c2):
+                    n_files_2, g_path_2 = self._discoverPhitsFiles(dir_c2)
+                    if n_files_2:
+                        logic.run(n_files_2, g_path_2, refNode, rbe_factors, suffix="_C2")
+                    else:
+                        print("  campo_2 vacio o sin archivos validos")
+                else:
+                    print("  No existe campo_2/ en la carpeta PHITS")
         except Exception as e:
             slicer.util.errorDisplay(f"Error durante el cálculo: {str(e)}")
             import traceback
@@ -480,7 +517,7 @@ class BNCTDosimetryWidget(ScriptedLoadableModuleWidget):
 
     def _getKermaVolumesForMesh(self, mesh_number):
         """Retorna lista de (node, nombre_corto) con los KERMA volumes que corresponden
-        al mesh_number dado. Gamma_Photon siempre se incluye."""
+        al mesh_number dado. Incluye campo_2 (_C2) si existe."""
         import re
         exclude = ["Dosis_Fisica_BNCT", "Dosis_RBE_BNCT", "Dosis_Final_BNCT", "Dosis_IsoE_BNCT"]
         volumes = []
@@ -488,11 +525,11 @@ class BNCTDosimetryWidget(ScriptedLoadableModuleWidget):
             name = node.GetName()
             if name in exclude:
                 continue
-            if name == 'Gamma_Photon':
+            if name == 'Gamma_Photon' or name == 'Gamma_Photon_C2':
                 volumes.append((node, name))
                 continue
             if 'Kerma' in name:
-                match = re.search(r'Kerma(\d+)$', name)
+                match = re.search(r'Kerma(\d+)(_C2)?$', name)
                 if match and int(match.group(1)) == mesh_number:
                     volumes.append((node, name))
         return volumes
@@ -623,7 +660,9 @@ class BNCTDosimetryWidget(ScriptedLoadableModuleWidget):
                 b10_conc=self.boronConcentration.value,
                 ratio_tb=organ_row['ratio'],
                 tir=self.factorTIR.value,
-                scale=self.scaleFactor.value
+                scale=self.scaleFactor.value,
+                peso1=self.peso1Spin.value,
+                peso2=self.peso2Spin.value
             )
             slicer.util.infoDisplay("Dosis Física calculada correctamente.")
         except Exception as e:
@@ -650,7 +689,9 @@ class BNCTDosimetryWidget(ScriptedLoadableModuleWidget):
                 b10_conc=self.boronConcentration.value,
                 ratio_tb=organ_row['ratio'],
                 tir=self.factorTIR.value,
-                scale=self.scaleFactor.value
+                scale=self.scaleFactor.value,
+                peso1=self.peso1Spin.value,
+                peso2=self.peso2Spin.value
             )
             slicer.util.infoDisplay("Dosis RBE calculada correctamente.")
         except Exception as e:
@@ -1007,16 +1048,15 @@ class BNCTDosimetryLogic(ScriptedLoadableModuleLogic):
         with open(path, 'w', encoding='utf-8') as f:
             json.dump(config, f, indent=2, ensure_ascii=False)
 
-    def run(self, neutron_files, gamma_path, refNode, rbe_factors):
-        logging.info('Iniciando proceso de dosis multicampo...')
-
-        self._cleanupOldVolumes()
+    def run(self, neutron_files, gamma_path, refNode, rbe_factors, suffix=""):
+        logging.info(f'Iniciando proceso de dosis multicampo (suffix="{suffix}")...')
 
         if not neutron_files:
-            slicer.util.errorDisplay("No se encontraron archivos mesh-N.out (neutrones) en la carpeta.")
+            if not suffix:
+                slicer.util.errorDisplay("No se encontraron archivos mesh-N.out (neutrones) en la carpeta.")
             return
 
-        print(f"--- Archivos PHITS encontrados ---")
+        print(f"--- Archivos PHITS encontrados (suffix='{suffix}') ---")
         print(f"  KERMA ({len(neutron_files)}):")
         for f in neutron_files:
             print(f"    - {os.path.basename(f)}")
@@ -1049,10 +1089,13 @@ class BNCTDosimetryLogic(ScriptedLoadableModuleLogic):
             
             comp_names = ["Boron", "FastNeutron", "ThermalNeutron"]
             for j, comp in enumerate(comp_names):
-                vol_name = f"{comp}_Kerma{i}"
+                vol_name = f"{comp}_Kerma{i}{suffix}"
                 self.createDoseVolume(n_data['data'][j], final_origin, final_spacing, vol_name)
 
         has_gamma = False
+        gamma_name = "Gamma_Photon"
+        if suffix:
+            gamma_name = f"Gamma_Photon{suffix}"
         if gamma_path and os.path.exists(gamma_path):
             print(f"--- Procesando gamma: {os.path.basename(gamma_path)} ---")
             g_data = self.parsePHITS(gamma_path)
@@ -1064,14 +1107,15 @@ class BNCTDosimetryLogic(ScriptedLoadableModuleLogic):
                 final_spacing = refNode.GetSpacing()
                 print(f"Gamma: final_origin={final_origin}, final_spacing={final_spacing}")
 
-            self.createDoseVolume(g_data['data'][0], final_origin, final_spacing, "Gamma_Photon")
+            self.createDoseVolume(g_data['data'][0], final_origin, final_spacing, gamma_name)
             has_gamma = True
         else:
-            logging.warning("No se encontró archivo gamma. Solo se cargarán campos de neutrones.")
+            if not suffix:
+                logging.warning("No se encontró archivo gamma. Solo se cargarán campos de neutrones.")
 
         self._organizeInSubjectHierarchy(len(neutron_files), has_gamma)
 
-        print(f"--- Carga completa ---")
+        print(f"--- Carga completa (suffix='{suffix}') ---")
         print(f"  KERMA components: {len(neutron_files)}")
         print(f"  Volúmenes creados: {len(neutron_files) * 3 + (1 if has_gamma else 0)}")
         logging.info("Proceso multicampo finalizado.")
@@ -1106,8 +1150,10 @@ class BNCTDosimetryLogic(ScriptedLoadableModuleLogic):
     def _isBoronComponent(self, name):
         return 'Boron' in name or 'boro' in name.lower()
 
-    def calculatePhysicalDose(self, nodes, b10_conc=15.0, ratio_tb=3.5, tir=1.0, scale=1.0):
-        """Dosis Física = suma de componentes KERMA seleccionados con B10*ratio."""
+    def calculatePhysicalDose(self, nodes, b10_conc=15.0, ratio_tb=3.5, tir=1.0, scale=1.0,
+                               peso1=1.0, peso2=1.0):
+        """Dosis Física = suma de componentes KERMA seleccionados con B10*ratio.
+        peso1, peso2: pesos para campo_1 y campo_2 (detectado por sufijo _C2)."""
         if not nodes:
             raise ValueError("No hay volúmenes KERMA seleccionados.")
 
@@ -1116,6 +1162,11 @@ class BNCTDosimetryLogic(ScriptedLoadableModuleLogic):
             arr = slicer.util.arrayFromVolume(node).astype(np.float64)
             if self._isBoronComponent(node.GetName()):
                 arr = arr * b10_conc * ratio_tb
+            # Aplicar peso del campo
+            if '_C2' in node.GetName():
+                arr *= peso2
+            else:
+                arr *= peso1
             total += arr
 
         phys_dose = total * tir * scale
@@ -1126,8 +1177,10 @@ class BNCTDosimetryLogic(ScriptedLoadableModuleLogic):
 
         print(f"Dosis Física: max={np.max(phys_dose):.4f}, min={np.min(phys_dose):.4f}")
 
-    def calculateRBEDose(self, nodes, rbe_values, b10_conc=15.0, ratio_tb=3.5, tir=1.0, scale=1.0):
-        """Dosis RBE = suma de componentes KERMA ponderados por RBE."""
+    def calculateRBEDose(self, nodes, rbe_values, b10_conc=15.0, ratio_tb=3.5, tir=1.0, scale=1.0,
+                          peso1=1.0, peso2=1.0):
+        """Dosis RBE = suma de componentes KERMA ponderados por RBE.
+        peso1, peso2: pesos para campo_1 y campo_2."""
         if not nodes:
             raise ValueError("No hay volúmenes KERMA seleccionados.")
         if len(nodes) != len(rbe_values):
@@ -1138,6 +1191,11 @@ class BNCTDosimetryLogic(ScriptedLoadableModuleLogic):
             arr = slicer.util.arrayFromVolume(node).astype(np.float64)
             if self._isBoronComponent(node.GetName()):
                 arr = arr * b10_conc * ratio_tb
+            # Aplicar peso del campo
+            if '_C2' in node.GetName():
+                arr *= peso2
+            else:
+                arr *= peso1
             total += arr * rbe
 
         rbe_dose = total * tir * scale
