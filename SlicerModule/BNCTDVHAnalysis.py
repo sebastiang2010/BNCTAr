@@ -34,17 +34,20 @@ class BNCTDVHAnalysisWidget(ScriptedLoadableModuleWidget):
         try: os.remove(_DEBUG_LOG_PATH)
         except: pass
 
-        # Limpiar nodos viejos
-        for cls, prefix in [("vtkMRMLPlotSeriesNode", "DVH_"),
-                             ("vtkMRMLTableNode", "Table_DVH_")]:
-            coll = slicer.mrmlScene.GetNodesByClass(cls)
-            for i in range(coll.GetNumberOfItems()):
-                node = coll.GetItemAsObject(i)
-                if node and node.GetName().startswith(prefix):
-                    slicer.mrmlScene.RemoveNode(node)
-        old_chart = slicer.mrmlScene.GetFirstNodeByName("Chart_DVH")
-        if old_chart:
-            slicer.mrmlScene.RemoveNode(old_chart)
+        # Limpiar nodos viejos (con proteccion por si las clases VTK aun no se registraron)
+        try:
+            for cls, prefix in [("vtkMRMLPlotSeriesNode", "DVH_"),
+                                 ("vtkMRMLTableNode", "Table_DVH_")]:
+                coll = slicer.mrmlScene.GetNodesByClass(cls)
+                for i in range(coll.GetNumberOfItems()):
+                    node = coll.GetItemAsObject(i)
+                    if node and node.GetName().startswith(prefix):
+                        slicer.mrmlScene.RemoveNode(node)
+            old_chart = slicer.mrmlScene.GetFirstNodeByName("Chart_DVH")
+            if old_chart:
+                slicer.mrmlScene.RemoveNode(old_chart)
+        except:
+            pass
 
         # --- UI ---
         dvhCollapsibleButton = ctk.ctkCollapsibleButton()
@@ -113,6 +116,9 @@ class BNCTDVHAnalysisWidget(ScriptedLoadableModuleWidget):
 
         self._dvh_config = self._loadConfigForDvh()
         self.layout.addStretch(1)
+
+    def cleanup(self):
+        ScriptedLoadableModuleWidget.cleanup(self)
 
     def _onDvhTodosToggled(self, checked):
         for i in range(self.dvhScrollLayout.count()):
