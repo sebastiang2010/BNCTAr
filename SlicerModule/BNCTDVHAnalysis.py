@@ -373,11 +373,12 @@ class BNCTDVHAnalysisLogic(ScriptedLoadableModuleLogic):
             rbe_t = org['rbe_thermal']
             rbe_g = org['rbe_gamma']
 
+            print(f"[DVH] Procesando {org['name']} (mesh {nmesh}, gray_level {org.get('gray_level',0)})...")
             dose = self._calcDoseForMesh(nmesh, dose_type, b10_conc, tir,
                                           ratio, rbe_b, rbe_f, rbe_t, rbe_g,
                                           model_params)
             if dose is None:
-                _log(f"  SKIP {org['name']}: dose=None para mesh {nmesh}")
+                print(f"[DVH]  -> SKIP: no hay kerma volumes para mesh {nmesh}")
                 continue
             if dose.shape != ct_shape:
                 try:
@@ -387,7 +388,7 @@ class BNCTDVHAnalysisLogic(ScriptedLoadableModuleLogic):
                                max(1, ct_shape[2]) / max(1, dose.shape[2])]
                     dose = zoom(dose, factors, order=1)
                 except Exception as e:
-                    _log(f"  SKIP {org['name']}: zoom fallo - {e}")
+                    print(f"[DVH]  -> SKIP: zoom fallo - {e}")
                     continue
             any_dose_computed = True
 
@@ -395,19 +396,24 @@ class BNCTDVHAnalysisLogic(ScriptedLoadableModuleLogic):
             mask = (mask_array == gl)
             roi_doses = dose[mask]
             if len(roi_doses) == 0:
-                _log(f"  SKIP {org['name']}: gray_level={gl} sin voxeles")
+                print(f"[DVH]  -> SKIP: gray_level={gl} sin voxeles en mascara para '{org['name']}'")
                 continue
 
             roi_doses = roi_doses[~np.isnan(roi_doses)]
             if len(roi_doses) == 0:
-                _log(f"  SKIP {org['name']}: todos NaN")
+                print(f"[DVH]  -> SKIP: todos NaN para '{org['name']}'")
                 continue
 
             sorted_doses = np.sort(roi_doses, axis=None)
             n = len(sorted_doses)
             dvh_vol = np.linspace(100.0, 0.0, n)
 
-            vol_cc = voxel_vol_cc * n
+            # Agregar punto (0, 100) al inicio para que la curva arranque desde arriba
+            sorted_doses = np.insert(sorted_doses, 0, 0.0)
+            dvh_vol = np.insert(dvh_vol, 0, 100.0)
+            n = len(sorted_doses)
+
+            vol_cc = voxel_vol_cc * (n - 1)  # voxeles reales sin contar el punto (0,100)
             Dmax = float(sorted_doses[-1])
             Dmin = float(sorted_doses[0])
             Dmean = float(np.mean(roi_doses))
