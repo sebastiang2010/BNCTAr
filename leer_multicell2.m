@@ -1,0 +1,56 @@
+function D = leer_multicell2(sthn,sfast,sg)% Leo la mesh de MCNP.
+%disp('Leyendo archivos de campo 1');
+Dosis1n = lecturaDosis;
+Dosis1p = lecturaDosis;
+Dosis1n.Matrix = Dosis1n.Matrix+Dosis1p.Matrix;
+Dosis1=Dosis1n;
+prompt = {'Field 1 weight/time:'};
+dlg_title = 'Field 1 - Weight:';
+num_lines = 1;
+defaultans = {'30'};
+answ = inputdlg(prompt,dlg_title,num_lines,defaultans);
+        
+tir1 = str2double(answ{1});
+
+% Leo la mesh de MCNP.
+%disp('Leyendo archivos de campo 2');
+Dosis2n = lecturaDosis;
+Dosis2p = lecturaDosis;
+Dosis2=Dosis2n;
+Dosis2.Matrix = Dosis2n.Matrix+Dosis2p.Matrix;
+prompt = {'Field 1 weight/time:'};
+dlg_title = 'Field 1 - Weight:';
+num_lines = 1;
+defaultans = {'30'};
+answ = inputdlg(prompt,dlg_title,num_lines,defaultans);
+        
+tir2 = str2double(answ{1});
+
+%Concentracion de boro en sangr.
+% Bb=18.587;
+%Tiempos de campos.
+% tir1 = 19.755;
+% tir2 = 22.695;
+%pesos de campos.
+wgt1 = tir1/(tir2+tir1);
+wgt2 = tir2/(tir2+tir1);
+
+% Separo y peso componentes.
+D1.boro(:,:,:) = wgt1*Dosis1.Matrix(:,:,:,1)+wgt2*Dosis2.Matrix(:,:,:,1);
+D1.thn(:,:,:) = wgt1*Dosis1.Matrix(:,:,:,2)+wgt2*Dosis2.Matrix(:,:,:,2);
+D1.fastn(:,:,:) = wgt1*Dosis1.Matrix(:,:,:,3)+wgt2*Dosis2.Matrix(:,:,:,3);
+D1.g(:,:,:) = wgt1*Dosis1.Matrix(:,:,:,4)+wgt2*Dosis2.Matrix(:,:,:,4);
+
+
+D.xc = Dosis1.X0:Dosis1.StepX:Dosis1.Xf;
+D.yc = Dosis1.Y0:Dosis1.StepY:Dosis1.Yf;
+D.zc = Dosis1.Z0:Dosis1.StepZ:Dosis1.Zf;
+
+D.boro(:,:,:) = sthn*D1.boro(:,:,:);
+D.fast(:,:,:) = sfast*D1.fastn(:,:,:);
+D.thn(:,:,:) = sthn*D1.thn(:,:,:);
+D.g(:,:,:) = sg*D1.g(:,:,:);
+D.E(:,:,:) = ((Dosis1.Matrix(:,:,:,2).*Dosis1.Error(:,:,:,2))+(Dosis2.Matrix(:,:,:,2).*Dosis2.Error(:,:,:,2)))./(Dosis1.Matrix(:,:,:,2)+Dosis2.Matrix(:,:,:,2));
+
+clear Dosis1 Dosis2
+

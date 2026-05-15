@@ -1,0 +1,159 @@
+function D1c=f_lectura_phits_gamma
+
+clc
+%clear
+%close all
+
+%% agregar la lectura de nx ny nz
+%% si part es neutron agrgar que hay que leer 3 mset
+
+%txt='Dosis_';
+%filesave='Dosis.mat';
+
+currentdirectory=pwd;
+%if isempty(file)
+tipoarchivo='*.out';
+[archivo,directorio]=uigetfile(tipoarchivo,'Select File');
+[~,msg]=fopen(fullfile(directorio,archivo));
+if ~isempty(msg)
+    disp(' ')
+    disp(msg)
+    return
+end
+file=fullfile(directorio,archivo);
+
+
+
+%tic
+lines=readlines(file);
+%time2=toc;
+
+
+
+txt=' newpage:';
+txt1=' part ';
+txt2=' nx =';
+txt3=' ny =';
+txt4=' nz =';
+
+% busco particula
+b=find(contains(lines,txt1));
+p = strtrim(lines(b(1)));
+p = strsplit(p, '=');
+% Divide por el signo '='
+part=strtrim(p{2});
+clear p b
+
+% busco nx, ny, nz
+c=find(contains(lines,txt2));
+p = strtrim(lines(c(1)));
+nx = regexp(p, '\d+', 'match');
+nx=str2double(nx);
+
+c=find(contains(lines,txt3));
+p = strtrim(lines(c(1)));
+ny = regexp(p, '\d+', 'match');
+ny=str2double(ny);
+
+c=find(contains(lines,txt4));
+p = strtrim(lines(c(1)));
+nz = regexp(p, '\d+', 'match');
+nz=str2double(nz);
+
+clear c p
+
+% busco los newpage
+%a=find(contains(lines,txt));
+%a1=find(lines=='#newpage:'); % la primera es diferente
+
+txt='hc';
+a1=find(contains(lines,txt));
+a=a1(1:2:end); % porque esta entre medio hc: y= 0.005 to 0.995 by 0.01 ; x= 0.5 to 0.5 by 1 ;
+
+
+colum=round(nx*ny/10);
+r = mod(nx*ny, 10);
+
+if r>0
+    colum=colum+1;
+end
+
+%nz=nz;
+%salto=24;
+%m1=m-1; % tamaño de la lectura
+
+% a1=a(1);
+% % esto es diferente porque el primero tiene #newpage
+% A{1}=lines(a1+1:a1+colum-1);
+%
+% B10 = cell2mat(cellfun(@(x) str2double(strsplit(strtrim(x))), A{1}(1:end-1), 'UniformOutput', false));
+% B11 =  cell2mat(cellfun(@(x) str2double(strsplit(strtrim(x))), A{1}(end,:), 'UniformOutput', false));
+% B12 = NaN(1,10);
+% B12(1:length(B11))=B11;
+%
+% B13=[B10;B12];
+%
+% if mod(nx*ny,10)==0
+%     B=reshape(B13',nx,ny);
+%     B1=B';
+% else
+%     A1=B13';
+%     A2=A1(:);
+%     B=zeros(nx,ny);
+%
+%     for j=1:ny
+%         o=A2(1:nx);
+%         B(:,j)=o';
+%         A2(1:nx)=[];
+%     end
+%     B1=B';
+% end
+%
+% C(:,:,1)=B1;
+A=[];
+for k=1:nz
+    A{k}=lines(a(k)+1:a(k)+colum-1);
+    B10 = cell2mat(cellfun(@(x) str2double(strsplit(strtrim(x))), A{k}(1:end-1), 'UniformOutput', false));
+    B11 = cell2mat(cellfun(@(x) str2double(strsplit(strtrim(x))), A{k}(end,:), 'UniformOutput', false));
+    B12 = NaN(1,10);
+    B12(1:length(B11))=B11;
+
+    B13=[B10;B12];
+
+    if mod(nx*ny,10)==0
+        B=reshape(B13',nx,ny);
+        B1=B';
+    else
+        A1=B13';
+        A2=A1(:);
+        %B=zeros(nx,ny);
+        %nmset=lines(a(k)+saltomset);
+        for j=1:ny
+            o=A2(1:nx);
+            B(:,j)=o';
+            A2(1:nx)=[];
+        end
+        B1=B;
+    end
+
+
+
+    C(:,:,k)=B1';
+
+end
+
+%figure(105)
+%for i=1:nz
+%    imshow(C(:,:,i),[])
+%    colormap(jet)
+%    pause(0.1)
+%end
+
+if strcmpi(part, 'photon')
+    D1c.Dg=C;
+end
+
+%save(filesave,'Dg')
+
+cd(currentdirectory);
+

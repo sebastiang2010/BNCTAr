@@ -1,0 +1,350 @@
+{
+  // ============================================
+  // ISOEFFECTIVE MODELS
+  // ============================================
+
+  "isoeffective": [
+    // ==========================================
+    // MODEL 1: Mucosa (Gonzalez 2017)
+    // ==========================================
+    {
+      "id": 1,
+      "name": "Mucosa (Gonzalez 2017)",
+      // Mucosa dose model: S J González et al 2017 Phys. Med. Biol. 62 7938
+      // Radiobiological data BNCT:
+      // Hamster cheek pouch precanserous oral model (Monti Hughes et al 2011, 2013)
+      // Reference parameters fractionation photon RT (Strigari et al 2012, IJROBP 83)
+      "alpha_r": 0.35,
+      "beta_r": 0.035,
+      "alpha_boro": 3.090888558919538,
+      "beta_boro": 7.034e-17,
+      "alpha_thn": 2.468388470867692,
+      "beta_thn": 1.0205e-16,
+      "alpha_fast": 2.468388470867692,
+      "beta_fast": 1.0205e-16,
+      // Repair times & proportions:
+      // Stuben et al 1997 Rad. Oncol. 42 (mouse lip mucosa)
+      "tof": 38.961,
+      "tos": 216.4502,
+      "pf_g": 0.8,
+      "ps_g": 0.2,
+      "pf_bnct": 0.2,
+      "ps_bnct": 0.8
+    },
+
+    // ==========================================
+    // MODEL 2: Brain (Dattoli 2024)
+    // ==========================================
+    {
+      "id": 2,
+      "name": "Brain (Dattoli 2024)",
+      // Brain dose model: A M Dattoli Viegas et al 2024 Phys. Med. 128 104840
+      // Radiobiological data of spinal cord model:
+      //   photons reference: Ang et al 1987 IJROBP 13(4) & Ang et al 1992 Rad. Oncol. 25(4)
+      //   BCNT: Morris et al 1994 Rad. Oncol. 32(3)
+      "alpha_r": 1.0,
+      "beta_r": 0.5,
+      "alpha_boro": 21.718,
+      "beta_boro": 0.8274,
+      "alpha_thn": 36.359,
+      "beta_thn": 6.579e-30,
+      "alpha_fast": 36.359,
+      "beta_fast": 6.579e-30,
+      // Repair times & proportions:
+      // Ang et al 1992 Rad. Oncol. 25(4)
+      "tof": 42,
+      "tos": 228,
+      "pf_g": 0.38,
+      "ps_g": 0.62,
+      "pf_bnct": 0.8,
+      "ps_bnct": 0.2
+    },
+
+    // ==========================================
+    // MODEL 3: H&N tumor (in-vivo - Perotti 2022)
+    // ==========================================
+    {
+      "id": 3,
+      "name": "H&N tumor (in-vivo - Perotti 2022)",
+      // H&N tumor dose model: G F Perotti Bernardini et al 2022 Radiat. Res. 198
+      // Radiobiological data:
+      //   Hamster cheek pouch oral cancer model (Gonzalez et al 2017, PMB 62)
+      "alpha_r": 0.029577713919801,
+      "beta_r": 0.00295777139198,
+      "alpha_boro": 0.34008281599818,
+      "beta_boro": 1.2531393414e-05,
+      "alpha_thn": 0.360532981331177,
+      "beta_thn": 1.2196885823e-05,
+      "alpha_fast": 0.360532981331177,
+      "beta_fast": 1.2196885823e-05,
+      // Repair times & proportions:
+      // Schmid et al 2010 Int. J. Radiat. Biol. 86 (SCC cell line)
+      "tof": 34.632,
+      "tos": 1212.1,
+      "pf_g": 0.53,
+      "ps_g": 0.47,
+      "pf_bnct": 0.2,
+      "ps_bnct": 0.8
+    },
+
+    // ==========================================
+    // MODEL 4: H&N tumor (in-vitro - Perotti 2022)
+    // ==========================================
+    {
+      "id": 4,
+      "name": "H&N tumor (in-vitro - Perotti 2022)",
+      // H&N tumor dose model: G F Perotti Bernardini et al 2022 Radiat. Res. 198
+      // Radiobiological data:
+      //   UT-SCC16A primary human cell
+      "alpha_r": 0.235,
+      "beta_r": 0.0173,
+      "alpha_boro": 2.5095,
+      "beta_boro": 1e-09,
+      "alpha_thn": 2.535,
+      "beta_thn": 1e-09,
+      "alpha_fast": 2.535,
+      "beta_fast": 1e-09,
+      // Repair times & proportions:
+      // Schmid et al 2010 Int. J. Radiat. Biol. 86 (SCC cell line)
+      "tof": 34.632,
+      "tos": 1212.1,
+      "pf_g": 0.53,
+      "ps_g": 0.47,
+      "pf_bnct": 0.2,
+      "ps_bnct": 0.8
+    },
+
+    // ==========================================
+    // MODEL 5: Gliosarcoma Gonzalez-SantaCruz
+    // ==========================================
+    {
+      "id": 5,
+      "name": "Gliosarcoma Gonzalez-SantaCruz",
+      // Data Coderre Invivo/Invitro
+      "alpha_r": 0.2008,
+      "beta_r": 0.0078,
+      "alpha_boro": 0.9091,
+      "beta_boro": 0.0019,
+      "alpha_thn": 0.4972,
+      "beta_thn": 0.088,
+      "alpha_fast": 0.4972,
+      "beta_fast": 0.088,
+      // Proportions single repair
+      "tof": 60,
+      "tos": 60,
+      "pf_g": 0.5,
+      "ps_g": 0.5,
+      "pf_bnct": 0.5,
+      "ps_bnct": 0.5
+    },
+
+    // ==========================================
+    // MODEL 6: Glioblastoma Marcaccio - Dattoli
+    // ==========================================
+    {
+      "id": 6,
+      "name": "Glioblastoma Marcaccio - Dattoli",
+      // Data Marcaccio U87 Invitro (Pavia)
+      "alpha_r": 0.2081,
+      "beta_r": 0.0186,
+      "alpha_boro": 3.01307,
+      "beta_boro": 0,
+      "alpha_thn": 0.4878,
+      "beta_thn": 0.5494,
+      "alpha_fast": 0.4878,
+      "beta_fast": 0.5494,
+      "tof": 91.42,
+      "tos": 1238,
+      // Proportions single repair
+      "pf_g": 0.77,
+      "ps_g": 0.23,
+      "pf_bnct": 0.2,
+      "ps_bnct": 0.8
+    },
+
+    // ==========================================
+    // MODEL 7: Glioblastoma micro (Marcaccio)
+    // ==========================================
+    {
+      "id": 7,
+      "name": "Glioblastoma micro (Marcaccio)",
+      // Boro dose corrected with microdosimetric factor (eta)
+      // alpha_boro = alpha_micro * eta
+      "alpha_r": 0.2081,
+      "beta_r": 0.0186,
+      "alpha_boro": 1.2109,
+      "beta_boro": 0,
+      "alpha_thn": 0.484124,
+      "beta_thn": 0.5516,
+      "alpha_fast": 0.484124,
+      "beta_fast": 0.5516,
+      "tof": 91.42,
+      "tos": 1238,
+      // Proportions single repair
+      "pf_g": 0.77,
+      "ps_g": 0.23,
+      "pf_bnct": 0.2,
+      "ps_bnct": 0.8
+    },
+
+    // ==========================================
+    // MODEL 8: Gliosarcoma Coderre Invivo
+    // ==========================================
+    {
+      "id": 8,
+      "name": "Gliosarcoma Coderre Invivo",
+      // Data Coderre Invivo/Invitro
+      "alpha_r": 0.26,
+      "beta_r": 0.003,
+      "alpha_boro": 1.13,
+      "beta_boro": 0,
+      "alpha_thn": 0.5,
+      "beta_thn": 0.09,
+      "alpha_fast": 0.5,
+      "beta_fast": 0.09,
+      // Proportions single repair
+      "tof": 60,
+      "tos": 60,
+      "pf_g": 0.5,
+      "ps_g": 0.5,
+      "pf_bnct": 0.5,
+      "ps_bnct": 0.5
+    },
+
+    // ==========================================
+    // MODEL 9: Gliosarcoma Coderre Invitro
+    // ==========================================
+    {
+      "id": 9,
+      "name": "Gliosarcoma Coderre Invitro",
+      // Data Coderre Invitro
+      "alpha_r": 0.13,
+      "beta_r": 0.01,
+      "alpha_boro": 2.32,
+      "beta_boro": 0.01,
+      "alpha_thn": 0.41,
+      "beta_thn": 0.17,
+      "alpha_fast": 0.41,
+      "beta_fast": 0.17,
+      // Proportions single repair
+      "tof": 60,
+      "tos": 60,
+      "pf_g": 0.5,
+      "ps_g": 0.5,
+      "pf_bnct": 0.5,
+      "ps_bnct": 0.5
+    }
+  ],
+
+  // ============================================
+  // TCP MODELS
+  // ============================================
+
+  "tcp": [
+    // ==========================================
+    // MODEL 1: H&N (Perotti 2022)
+    // ==========================================
+    {
+      "id": 1,
+      "name": "H&N (Perotti 2022)",
+      // H&N parameters derived from the relationship of complete response rates
+      // with tumor volume and dose (converted to single fraction)
+      // from Rwigema et al. (2011).
+      "Ar": 0.0218,
+      "Br": 0.00218,
+      "c_one": 2.435,
+      "c_two": 0.12,
+      // Repair times & proportions:
+      // Schmid et al 2010 Int. J. Radiat. Biol. 86 (SCC cell line)
+      "tof": 34.632,
+      "tos": 1212.1,
+      "pf_g": 0.53,
+      "ps_g": 0.47,
+      "pf_bnct": 0.2,
+      "ps_bnct": 0.8
+    },
+
+    // ==========================================
+    // MODEL 2: H&N (Gonzalez 2017)
+    // ==========================================
+    {
+      "id": 2,
+      "name": "H&N (Gonzalez 2017)",
+      // VALORES PARA H&N from Mandy et al. experiments con datos de
+      // Emiliano sacando todos los de 28Gy 9/03/2017.
+      // Parametros con datos Schmid.
+      "Ar": 0.02957,
+      "Br": 0.002957,
+      "c_one": 22.59,
+      "c_two": 0.3345,
+      // Repair times & proportions:
+      // Schmid et al 2010 Int. J. Radiat. Biol. 86 (SCC cell line)
+      "tof": 34.632,
+      "tos": 1212.1,
+      "pf_g": 0.53,
+      "ps_g": 0.47,
+      "pf_bnct": 0.2,
+      "ps_bnct": 0.8
+    },
+
+    // ==========================================
+    // MODEL 3: GBM Marcaccio 3 param
+    // ==========================================
+    {
+      "id": 3,
+      "name": "GBM Marcaccio 3 param",
+      // Data of Pedicini paper
+      // The model is valid for a volume of 62-588 cc.
+      // The data from the conventional photon therapy are converted in single fraction
+      "Ar": 0.019,
+      "Br": 0.0024,
+      "c_one": 1.6675,
+      "c_two": 0.1187,
+      // Datos GBM U87 (Data from Djuzenova 2008) t en dias
+      "tof": 91.42,
+      "tos": 1238,
+      // Proporciones Schmid (low LET), Schmid (high LET)
+      "pf_g": 0.77,
+      "ps_g": 0.23,
+      "pf_bnct": 0.2,
+      "ps_bnct": 0.8
+    }
+  ],
+
+  // ============================================
+  // NTCP MODELS
+  // ============================================
+
+  "ntcp": [
+    // ==========================================
+    // MODEL 1: mucositis >= 3 (Gonzalez 2017)
+    // ==========================================
+    {
+      "id": 1,
+      "name": "mucositis >= 3 (Gonzalez 2017)",
+      // Model based on fractionation photon RT (Strigari et al 2012, IJROBP 83)
+      // the model depends on the maximum dose in mucosa (a=0)
+      "TD50": 39.8,
+      "m": 0.17,
+      "ab": 10,
+      // EUD parameter: a=0 Dmax / a=1 Dmean
+      "a": 0
+    },
+
+    // ==========================================
+    // MODEL 2: SS >= 2 (Dattoli 2024)
+    // ==========================================
+    {
+      "id": 2,
+      "name": "SS >= 2 (Dattoli 2024)",
+      // Model for predicting Somnolence Syndrome (SS)
+      // based on human BNCT treatment data (Coderre et al 2004, ARI)
+      // the model depends on the EUD in brain (a=10; Sud et. al. 2021)
+      "TD50": 13.9049,
+      "m": 0.1766,
+      "ab": 3,
+      // EUD parameter: a=0 Dmax / a=1 Dmean
+      "a": 10
+    }
+  ]
+}

@@ -1,0 +1,48 @@
+% Cargar una imagen DICOM
+%info = dicominfo('image.dcm');
+close all 
+ 
+
+I=patient.stack; 
+I=I(:,:,patient.nimg); 
+Irgb = cat(3,I,I,I);
+
+px=patient.px; 
+py=patient.py; 
+if patient.show==2 
+   Dw=patient.Dw; 
+end 
+
+
+
+figure(1)
+imshow(I(:,:,patient.nimg),[])
+plot_dose=Dw(:,:,patient.nimg); 
+%if(~isfield(patient,'dose_surf'))
+hold on 
+patient.dose_surf = surf(plot_dose,'FaceAlpha',0.4);
+set(patient.dose_surf,'ButtonDownFcn',@imgClick)
+shading interp;
+colormap jet
+
+% Generar un corte sagital
+figure(2)
+sagittal = squeeze(I(px,:,:));
+sagittal=sagittal'; 
+imshow(sagittal, []);
+
+% Generar un corte coronal
+figure(3)
+coronal = squeeze(I(:,py,:));
+coronal=coronal'; 
+imshow(coronal, []);
+
+
+
+plot_dose=Dw(:,:,patient.nimg); 
+%if(~isfield(patient,'dose_surf'))
+patient.dose_surf = surf(plot_dose,'FaceAlpha',0.4);
+set(patient.dose_surf,'ButtonDownFcn',@imgClick)
+shading interp;
+colormap jet
+

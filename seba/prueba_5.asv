@@ -1,0 +1,73 @@
+clc 
+%clear 
+close all 
+
+
+I=patient.stack; 
+Dw=patient.Dw; 
+Dt=patient.Dt.boro; 
+
+s=size(Dt); 
+
+IND=isnan(Dt);
+smesh=size(IND); 
+
+mesh=zeros(s); 
+mesh(~IND)=1;  
+
+figure(1)
+imshow(mesh(:,:,30),[])
+
+plot_dose=Dw(:,:,44); 
+max_dose=max(Dw(:)); 
+
+Irgb = cat(3,I(:,:,44),I(:,:,44),I(:,:,44));
+figure(2)
+image(Irgb)
+hold on 
+surf(plot_dose,'FaceAlpha',0.4);
+shading interp;
+colormap jet
+hold on 
+[C,patient.hisoc] = contour(100.*(plot_dose./max_dose), 'LineColor', 'k');
+clabel(C,patient.hisoc,'Color','white')
+
+clc 
+Dw=Dw./max_dose; 
+Dw=Dw.*100; 
+
+IND=(Dw>=70);  
+
+
+D10=Dw.*IND; 
+% figure(5)
+% for i=1:88
+%     imshow(IND(:,:,i),[])
+%     pause(0.2)
+% end 
+
+%Er=paciente.E;
+%% calculo de voluem que deja afuera la mesh 
+P2=double(I).*mesh; 
+
+% figure(2)
+% for i=1:88
+%     imshow(P2(:,:,i),[])
+%     pause(0.2)
+% end 
+
+roi=unique(I); 
+nroi=length(roi); 
+
+for i=1:nroi
+    nfo_roi{1,i}=sum(I==roi(i); 
+    info_roi{1,i}=P2==roi(i); 
+end     
+
+
+
+
+
+
+
+
