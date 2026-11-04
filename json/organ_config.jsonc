@@ -45,7 +45,7 @@
       "rbe_thermal": 3.2,
       "rbe_gamma": 1.0,
       "ratio": 1.0,
-      "tumor": true,
+      "tumor": false,
       "gray_level": 68
     },
     {
