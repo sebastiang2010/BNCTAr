@@ -1,0 +1,24 @@
+# --- Logs de depuracion del modulo (se reescriben en cada corrida) ---
+SlicerModule/_bnct_*.txt
+
+# --- Salidas generadas ---
+SlicerModule/voxel/
+SlicerModule/out_phits/
+
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+
+# --- Herramientas locales (graphify / ruflo / foxcode) ---
+graphify-out/
+ruvector.db
+.foxcode/
+
+# --- Entorno / editores ---
+.venv/
+venv/
+.idea/
+.vscode/
+Thumbs.db
+desktop.ini
