@@ -45,13 +45,11 @@ def _normName(s):
 _STL_PATH = _first_existing(
     os.path.join(_MODULE_DIR, 'SLT', 'conos_pared_hueco.stl'),
 )
-# La config json vive en la raíz del proyecto (json/), con fallback a SlicerModule/json
+# La config json vive dentro de SlicerModule/json
 _ORGAN_CONFIG_PATH = _first_existing(
-    os.path.join(_PROJECT_DIR, 'json', 'organ_config.jsonc'),
     os.path.join(_MODULE_DIR, 'json', 'organ_config.jsonc'),
 )
 _MODELS_PATH = _first_existing(
-    os.path.join(_PROJECT_DIR, 'json', 'models.jsonc'),
     os.path.join(_MODULE_DIR, 'json', 'models.jsonc'),
 )
 # El MAT vive dentro de SlicerModule/mat
@@ -186,6 +184,7 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
 
         # Estado del STL
         self.stlStatusLabel = qt.QLabel("STL: carga manual con el boton de abajo.")
+        self.stlStatusLabel.setWordWrap(True)
         self.stlStatusLabel.setStyleSheet("color: #666; font-size: 11px;")
         self.layout.addWidget(self.stlStatusLabel)
 
@@ -217,7 +216,32 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
         self.tabs.addTab(self.collisionsTab, "Colisiones")
         self._setupCollisionsUI()
 
+        # --- Pestana 5: Voxelizado ---
+        self.voxelTab = qt.QWidget()
+        self.voxelLayout = qt.QVBoxLayout(self.voxelTab)
+        self.tabs.addTab(self.voxelTab, "Voxelizado")
+        self._setupVoxelUI()
+
+        _log("BNCT module loaded: v2026-11-06 json-only gray_levels + autocarga voxel + labels wrap")
         self.layout.addStretch(1)
+
+    def enter(self):
+        """Se llama cada vez que el usuario abre el modulo: autocarga los niveles."""
+        try:
+            if getattr(self, 'voxelMappingTable', None) is None:
+                self._removeLegacyMaskNodes()
+                return
+            removed = self._removeLegacyMaskNodes()
+            if removed:
+                self.voxelStatusLabel.setText(
+                    f"Se eliminaron {len(removed)} mascaras de una version anterior "
+                    "(niveles >=256).\nPresione 'Generar mascaras' para regenerarlas.")
+                self.voxelStatusLabel.setStyleSheet("color: #800; font-size: 11px;")
+            if self.voxelMappingTable.rowCount == 0:
+                if self.voxelMaskSelector.currentNode() is not None:
+                    self.onLoadVoxelLevels(silent=True)
+        except Exception as e:
+            _log(f"enter: autocarga de niveles fallo: {e}")
 
     def onLoadSTL(self):
         """Carga manual del STL del reactor (conos_pared_hueco.stl).
@@ -280,6 +304,325 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
                 f"Resultado: Sin interseccion"
             )
             slicer.util.infoDisplay("No se detectaron colisiones entre los modelos.")
+
+    def onLoadVoxelLevels(self, silent=False):
+        """Lee los niveles de gris unicos de la mascara y llena la tabla de mapeo.
+
+        `silent=True` (autocarga automatica al abrir el tab o cambiar de mascara)
+        evita el dialogo de error cuando todavia no hay mascara seleccionada.
+        Tambien se usa como slot de clicked(bool): en ese caso `silent` llega
+        como False y se mantiene el dialogo de error original.
+        """
+        maskNode = self.voxelMaskSelector.currentNode()
+        if not maskNode:
+            if silent is True:
+                self.voxelMappingTable.clearContents()
+                self.voxelMappingTable.setRowCount(0)
+                self.voxelStatusLabel.setText(
+                    "Sin mascara gris: seleccione Mascaras_Combinadas_Gris o genere las mascaras.")
+                self.voxelStatusLabel.setStyleSheet("color: #666; font-size: 11px;")
+                _log("onLoadVoxelLevels: sin mascara seleccionada (autocarga silenciosa)")
+                return
+            slicer.util.errorDisplay("Seleccione la mascara gris (Mascaras_Combinadas_Gris).")
+            return
+        try:
+            arr = slicer.util.arrayFromVolume(maskNode)
+            if arr is None:
+                if silent is not True:
+                    slicer.util.errorDisplay("No se pudo leer el volumen de la mascara.")
+                else:
+                    _log("onLoadVoxelLevels: volumen no leible (autocarga silenciosa)")
+                return
+            arr_int = np.rint(np.asarray(arr, dtype=np.float64)).astype(np.int64)
+            levels = [int(v) for v in np.unique(arr_int)]
+
+            defaults = self._voxelUniverseDefaults()
+            sin_config = [gl for gl in levels if gl not in defaults]
+
+            # Si la mascara seleccionada tiene niveles de una version anterior
+            # (>=256) y existe otra mas nueva cuyos niveles estan todos en la
+            # config, cambiar a esa automaticamente (una sola vez, sin recursion).
+            if sin_config and any(gl >= 256 for gl in sin_config) \
+                    and not getattr(self, '_voxelAutoSwitching', False):
+                clean = self._voxelFindCleanMask()
+                if clean is not None and clean.GetID() != maskNode.GetID():
+                    _log(f"onLoadVoxelLevels: '{maskNode.GetName()}' tiene niveles >=256; "
+                         f"cambiando a la mascara mas reciente '{clean.GetName()}'")
+                    self._voxelAutoSwitching = True
+                    try:
+                        self.voxelMaskSelector.setCurrentNode(clean)
+                    finally:
+                        self._voxelAutoSwitching = False
+                    self.onLoadVoxelLevels(silent=silent)
+                    return
+
+            self.voxelMappingTable.clearContents()
+            self.voxelMappingTable.setRowCount(len(levels))
+            for row, gl in enumerate(levels):
+                if gl in defaults:
+                    uni = defaults[gl]
+                else:
+                    uni = "SIN CONFIG"
+
+                item_gl = qt.QTableWidgetItem(str(gl))
+                item_gl.setFlags(qt.Qt.ItemIsEnabled | qt.Qt.ItemIsSelectable)
+                self.voxelMappingTable.setItem(row, 0, item_gl)
+
+                item_uni = qt.QTableWidgetItem(str(uni))
+                self.voxelMappingTable.setItem(row, 1, item_uni)
+
+            if sin_config:
+                sin_config_sorted = sorted(sin_config)
+                aviso = (f"AVISO: {len(sin_config)} niveles sin universo:\n"
+                         f"{sin_config_sorted}\n"
+                         "Corrija la columna 'universo (U=)' o regenere las mascaras.")
+                if any(gl >= 256 for gl in sin_config):
+                    aviso += ("\nNiveles >=256: la mascara seleccionada fue creada por una "
+                              "version anterior del modulo.\n"
+                              "Presione 'Generar mascaras': el modulo borra esas mascaras "
+                              "viejas y crea una nueva con los gray_level de la config.")
+                self.voxelStatusLabel.setText(aviso)
+                self.voxelStatusLabel.setStyleSheet("color: #800; font-size: 11px;")
+                try:
+                    _log(f"onLoadVoxelLevels: nodo='{maskNode.GetName()}' id={maskNode.GetID()} "
+                         f"max={int(np.max(arr_int))} niveles={sorted(levels)} "
+                         f"sin_config={sin_config_sorted}")
+                    for _i in range(slicer.mrmlScene.GetNumberOfNodesByClass("vtkMRMLLabelMapVolumeNode")):
+                        _n = slicer.mrmlScene.GetNthNodeByClass(_i, "vtkMRMLLabelMapVolumeNode")
+                        _nm = _n.GetName() or ""
+                        if not (_nm.startswith(_PREFIX_INDIVIDUAL) or _nm == _NAME_COMBINED
+                                or _nm.startswith(_NAME_COMBINED + "_")
+                                or _nm == _NAME_COMBINED_GRAY
+                                or _nm.startswith(_NAME_COMBINED_GRAY + "_")):
+                            continue
+                        _a = slicer.util.arrayFromVolume(_n)
+                        _mx = int(np.max(np.asarray(_a))) if _a is not None else -1
+                        _log(f"  mascara en escena: '{_nm}' id={_n.GetID()} max={_mx}")
+                except Exception as _e:
+                    _log(f"onLoadVoxelLevels: diagnostico fallo: {_e}")
+                _log(f"onLoadVoxelLevels: niveles SIN CONFIG: {sin_config}")
+            else:
+                from_config = sum(1 for gl in levels if gl in defaults)
+                self.voxelStatusLabel.setText(
+                    f"{len(levels)} gray_levels cargados desde '{maskNode.GetName()}' "
+                    f"({from_config} con universo desde organ_config.jsonc).")
+                self.voxelStatusLabel.setStyleSheet("color: #060; font-size: 11px;")
+                _log(f"onLoadVoxelLevels: {len(levels)} niveles: {levels}")
+        except Exception as e:
+            _log(f"onLoadVoxelLevels: error: {e}")
+            if silent is not True:
+                slicer.util.errorDisplay("Error leyendo los niveles de gris. Ver _bnct_debug.txt.")
+
+    def _onVoxelMaskChanged(self, node=None):
+        """Autocarga la tabla de universos cada vez que cambia la mascara gris."""
+        try:
+            if node is None:
+                self.voxelMappingTable.clearContents()
+                self.voxelMappingTable.setRowCount(0)
+                self.voxelStatusLabel.setText(
+                    "Seleccione la mascara gris (Mascaras_Combinadas_Gris).")
+                self.voxelStatusLabel.setStyleSheet("color: #666; font-size: 11px;")
+                return
+            self.onLoadVoxelLevels(silent=True)
+        except Exception as e:
+            _log(f"_onVoxelMaskChanged: error: {e}")
+
+    def _voxelFindCleanMask(self):
+        """Devuelve la Mascaras_Combinadas_Gris mas nueva cuyos niveles estan
+        todos en organ_config.jsonc (sin valores >=256 de versiones anteriores)."""
+        defaults = self._voxelUniverseDefaults()
+        candidates = []
+        for i in range(slicer.mrmlScene.GetNumberOfNodesByClass("vtkMRMLLabelMapVolumeNode")):
+            n = slicer.mrmlScene.GetNthNodeByClass(i, "vtkMRMLLabelMapVolumeNode")
+            nm = n.GetName() or ""
+            if nm == _NAME_COMBINED_GRAY or nm.startswith(_NAME_COMBINED_GRAY + "_"):
+                candidates.append(n)
+        for node in reversed(candidates):  # el mas nuevo primero
+            try:
+                arr = slicer.util.arrayFromVolume(node)
+                if arr is None:
+                    continue
+                vals = set(int(v) for v in np.unique(np.asarray(arr)))
+                if all(v in defaults for v in vals):
+                    return node
+            except Exception as e:
+                _log(f"_voxelFindCleanMask: error con '{node.GetName()}': {e}")
+        return None
+
+    def _removeLegacyMaskNodes(self):
+        """Elimina labelmaps del modulo cuyos valores lleguen a 256 o mas.
+
+        Esos niveles los inventaba una version anterior del modulo para los
+        segmentos sin ROI en organ_config.jsonc; quedaron grabados dentro de la
+        mascara combinada y no se pueden mapear a ningun universo (U=).
+        Devuelve la lista de descripciones de los nodos eliminados.
+        """
+        removed = []
+        try:
+            n_nodes = slicer.mrmlScene.GetNumberOfNodesByClass("vtkMRMLLabelMapVolumeNode")
+            for i in range(n_nodes - 1, -1, -1):  # descendente: borrar no invalida indices menores
+                node = slicer.mrmlScene.GetNthNodeByClass(i, "vtkMRMLLabelMapVolumeNode")
+                if node is None:
+                    continue
+                nm = node.GetName() or ""
+                # Solo los labelmaps COMBINADOS pueden tener valores >=256: las
+                # mascaras individuales (Mascara_*) son binarias (0/1). Se evita
+                # borrar un labelmap del usuario que se llame "Mascara_algo".
+                is_module_mask = (nm == _NAME_COMBINED
+                                  or nm.startswith(_NAME_COMBINED + "_")
+                                  or nm == _NAME_COMBINED_GRAY
+                                  or nm.startswith(_NAME_COMBINED_GRAY + "_"))
+                if not is_module_mask:
+                    continue
+                try:
+                    arr = slicer.util.arrayFromVolume(node)
+                    if arr is None:
+                        continue
+                    vals = np.unique(np.asarray(arr))
+                    if vals.size and int(vals.max()) >= 256:
+                        removed.append(f"{nm} (max={int(vals.max())})")
+                        slicer.mrmlScene.RemoveNode(node)
+                except Exception as e:
+                    _log(f"_removeLegacyMaskNodes: no se pudo evaluar '{nm}': {e}")
+        except Exception as e:
+            _log(f"_removeLegacyMaskNodes: error general: {e}")
+        if removed:
+            _log(f"_removeLegacyMaskNodes: eliminadas {len(removed)} mascaras con niveles >=256: {removed}")
+        else:
+            _log("_removeLegacyMaskNodes: ninguna mascara con niveles >=256")
+        return removed
+
+    def onGenerateVoxel(self):
+        """Genera voxel.dat a partir de la mascara gris y la tabla de mapeo."""
+        maskNode = self.voxelMaskSelector.currentNode()
+        if not maskNode:
+            slicer.util.errorDisplay("Seleccione la mascara gris (Mascaras_Combinadas_Gris).")
+            return
+        if self.voxelMappingTable.rowCount == 0:
+            self.onLoadVoxelLevels()
+        if self.voxelMappingTable.rowCount == 0:
+            slicer.util.errorDisplay(
+                "La tabla de universos esta vacia: la mascara seleccionada no tiene "
+                "niveles utiles. Verifique la 'Mascara gris' y regenere las mascaras.")
+            return
+
+        universo_by_gray = {}
+        try:
+            for row in range(self.voxelMappingTable.rowCount):
+                gl_item = self.voxelMappingTable.item(row, 0)
+                uni_item = self.voxelMappingTable.item(row, 1)
+                if gl_item is None or uni_item is None:
+                    continue
+                gl = int(str(gl_item.text()).strip())
+                uni = int(str(uni_item.text()).strip())
+                universo_by_gray[gl] = uni
+        except Exception:
+            legacy = []
+            for row in range(self.voxelMappingTable.rowCount):
+                gl_item = self.voxelMappingTable.item(row, 0)
+                uni_item = self.voxelMappingTable.item(row, 1)
+                if gl_item is None or uni_item is None:
+                    continue
+                txt = str(uni_item.text()).strip()
+                try:
+                    int(txt)
+                except Exception:
+                    try:
+                        gl = int(str(gl_item.text()).strip())
+                    except Exception:
+                        gl = -1
+                    legacy.append(gl)
+            legacy.sort()
+            msg = ("Niveles sin universo asignado: " + ", ".join(str(g) for g in legacy) + ".\n")
+            if any(g >= 256 for g in legacy):
+                msg += ("Los niveles >= 256 no existen en organ_config.jsonc: la mascara gris "
+                        "seleccionada es de una version anterior.\n"
+                        "Presione 'Generar mascaras' para regenerarla con los gray_level de la config.")
+            else:
+                msg += "Asigne un universo (U=) valido en la tabla o regenere las mascaras."
+            _log("onGenerateVoxel: " + msg.replace("\n", " "))
+            slicer.util.errorDisplay(msg)
+            return
+
+        orientation = str(self.voxelOrientationCombo.currentText)
+        outputPath = str(self.voxelOutputPath.text).strip()
+        if not outputPath:
+            slicer.util.errorDisplay("Indique la ruta de salida del voxel.dat.")
+            return
+
+        resampleX = float(self.voxelResampleX.value)
+        resampleY = float(self.voxelResampleY.value)
+        resampleZ = float(self.voxelResampleZ.value)
+
+        logic = BNCTLogic()
+        voxelNode = maskNode
+        qt.QApplication.setOverrideCursor(qt.Qt.WaitCursor)
+        try:
+            if (abs(resampleX - 1.0) > 1e-9 or abs(resampleY - 1.0) > 1e-9
+                    or abs(resampleZ - 1.0) > 1e-9):
+                voxelNode = logic.resampleMaskVolume(
+                    maskNode, resampleX, resampleY, resampleZ)
+            if voxelNode is None:
+                result = None
+            else:
+                result = logic.generateVoxelDat(
+                    voxelNode, universo_by_gray, orientation, outputPath)
+        finally:
+            qt.QApplication.restoreOverrideCursor()
+
+        if result is None:
+            self.voxelStatusLabel.setText("No se pudo generar el voxel.dat. Ver _bnct_debug.txt.")
+            self.voxelStatusLabel.setStyleSheet("color: #800; font-size: 11px;")
+            self.voxelReportText.setPlainText("Error al generar el voxel.dat. Ver el log.")
+            slicer.util.errorDisplay("No se pudo generar el voxel.dat. Ver el log.")
+            return
+
+        shape = result.get('shape', ())
+        universos = result.get('universos', [])
+        self.voxelStatusLabel.setText(f"voxel.dat generado: {result.get('path')}")
+        self.voxelStatusLabel.setStyleSheet("color: #060; font-size: 11px;")
+        resample_txt = "sin cambios (1,1,1)"
+        if voxelNode is not maskNode:
+            resample_txt = (f"{resampleX:g} x {resampleY:g} x {resampleZ:g}")
+        self.voxelReportText.setPlainText(
+            f"Mascara origen: {maskNode.GetName()}\n"
+            f"Mascara usada: {voxelNode.GetName()}\n"
+            f"Resample (X,Y,Z): {resample_txt}\n"
+            f"Orientacion: {result.get('orientation')}\n"
+            f"Shape (Y x X x Z): {shape}\n"
+            f"Voxeles: {result.get('voxels')}\n"
+            f"Universos usados (U=): {', '.join(str(u) for u in universos)}\n"
+            f"Valores RLE escritos: {result.get('values')}\n"
+            f"Archivo: {result.get('path')}"
+        )
+        slicer.util.infoDisplay(f"voxel.dat generado en:\n{result.get('path')}")
+
+    def onBrowseVoxelOutput(self):
+        """Permite elegir la carpeta de salida del voxel.dat."""
+        current = os.path.dirname(str(self.voxelOutputPath.text).strip())
+        if not current or not os.path.isdir(current):
+            current = _MODULE_DIR
+        folder = qt.QFileDialog.getExistingDirectory(
+            slicer.util.mainWindow(), "Carpeta de salida del voxel.dat", current)
+        if folder:
+            self.voxelOutputPath.setText(os.path.join(folder, "voxel.dat"))
+
+    def _voxelUniverseDefaults(self):
+        """Devuelve {gray_level: universo} leido de organ_config.jsonc (incluye AIRE)."""
+        result = {}
+        try:
+            cfg = BNCTLogic.load_jsonc(_ORGAN_CONFIG_PATH)
+            aire = cfg.get('aire') or {}
+            if 'gray_level' in aire and 'universo' in aire:
+                result[int(aire['gray_level'])] = int(aire['universo'])
+            for roi in cfg.get('rois', []):
+                if 'gray_level' in roi and 'universo' in roi:
+                    result[int(roi['gray_level'])] = int(roi['universo'])
+        except Exception as e:
+            _log(f"_voxelUniverseDefaults: no se pudo leer organ_config.jsonc: {e}")
+        if 0 not in result:
+            result[0] = 1  # AIRE por defecto
+        return result
 
     # ------------------------------------------------------------------
     # UI: Dosimetry
@@ -504,6 +847,7 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
 
         # Info de la config
         self.masksConfigLabel = qt.QLabel(self._masksConfigInfo())
+        self.masksConfigLabel.setWordWrap(True)
         self.masksConfigLabel.setStyleSheet("color: #666; font-size: 11px;")
         fl.addRow("Config ROIs:", self.masksConfigLabel)
 
@@ -589,6 +933,7 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
         fl.addRow(self.btnDetectCollisions)
 
         self.collisionStatusLabel = qt.QLabel("Seleccione los dos modelos y presione Detectar Colisiones.")
+        self.collisionStatusLabel.setWordWrap(True)
         self.collisionStatusLabel.setStyleSheet("color: #666; font-size: 11px;")
         fl.addRow(self.collisionStatusLabel)
 
@@ -606,6 +951,121 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
             cone = slicer.mrmlScene.GetFirstNodeByName("Conos_Pared_Reactor")
         if cone:
             self.coneModelSelector.setCurrentNode(cone)
+
+    def _setupVoxelUI(self):
+        fl = qt.QFormLayout()
+        self.voxelLayout.addLayout(fl)
+
+        self.voxelMaskSelector = slicer.qMRMLNodeComboBox()
+        self.voxelMaskSelector.nodeTypes = ["vtkMRMLScalarVolumeNode"]
+        self.voxelMaskSelector.selectNodeUponCreation = True
+        self.voxelMaskSelector.addEnabled = False
+        self.voxelMaskSelector.removeEnabled = False
+        self.voxelMaskSelector.noneEnabled = True
+        self.voxelMaskSelector.showHidden = False
+        self.voxelMaskSelector.setMRMLScene(slicer.mrmlScene)
+        self.voxelMaskSelector.setToolTip(
+            "Labelmap gris combinado (Mascaras_Combinadas_Gris). Sus valores son los gray_level "
+            "que se traducen a universo (U=) en el voxel.dat.")
+        fl.addRow("Mascara gris:", self.voxelMaskSelector)
+
+        # Purgar mascaras creadas por la version anterior (niveles 256+).
+        removed_legacy = self._removeLegacyMaskNodes()
+        if removed_legacy:
+            _log(f"_setupVoxelUI: purgadas mascaras viejas: {removed_legacy}")
+
+        grayNode = slicer.mrmlScene.GetFirstNodeByName(_NAME_COMBINED_GRAY)
+        for i in range(slicer.mrmlScene.GetNumberOfNodesByClass("vtkMRMLLabelMapVolumeNode")):
+            n = slicer.mrmlScene.GetNthNodeByClass(i, "vtkMRMLLabelMapVolumeNode")
+            nm = n.GetName() or ""
+            if nm == _NAME_COMBINED_GRAY or nm.startswith(_NAME_COMBINED_GRAY + "_"):
+                grayNode = n  # el ultimo encontrado = el mas nuevo
+        if grayNode:
+            self.voxelMaskSelector.setCurrentNode(grayNode)
+
+        self.voxelLoadLevelsButton = qt.QPushButton("Cargar gray_levels")
+        self.voxelLoadLevelsButton.setToolTip(
+            "Lee los valores unicos de la mascara y llena la tabla de mapeo.")
+        self.voxelLoadLevelsButton.connect('clicked(bool)', self.onLoadVoxelLevels)
+        fl.addRow(self.voxelLoadLevelsButton)
+
+        self.voxelMappingTable = qt.QTableWidget()
+        self.voxelMappingTable.setColumnCount(2)
+        self.voxelMappingTable.setHorizontalHeaderLabels(["gray_level", "universo (U=)"])
+        self.voxelMappingTable.setSelectionBehavior(qt.QAbstractItemView.SelectRows)
+        self.voxelMappingTable.setMinimumHeight(180)
+        self.voxelMappingTable.horizontalHeader().setStretchLastSection(True)
+        fl.addRow("Mapeo de universos:", self.voxelMappingTable)
+
+        self.voxelOrientationCombo = qt.QComboBox()
+        self.voxelOrientationCombo.addItems(["Axial", "Sagital", "Coronal"])
+        self.voxelOrientationCombo.setToolTip(
+            "Orientacion de los cortes, igual que en genera_voxel_PHITS_v9.m.")
+        fl.addRow("Orientacion:", self.voxelOrientationCombo)
+
+        # --- Resample opcional (0 < f <= 1; 1 = sin cambios) ---
+        resampleLayout = qt.QHBoxLayout()
+        self.voxelResampleX = qt.QDoubleSpinBox()
+        self.voxelResampleY = qt.QDoubleSpinBox()
+        self.voxelResampleZ = qt.QDoubleSpinBox()
+        for _box, _axis in ((self.voxelResampleX, "X"),
+                            (self.voxelResampleY, "Y"),
+                            (self.voxelResampleZ, "Z")):
+            _box.setDecimals(2)
+            _box.setMinimum(0.01)
+            _box.setMaximum(1.00)
+            _box.setSingleStep(0.05)
+            _box.setValue(1.00)
+            _box.setMaximumWidth(70)
+            _box.setToolTip(f"Factor de resample en {_axis}. 1,00 = sin cambios; "
+                            f"0,50 = mitad de resolucion en ese eje.")
+            resampleLayout.addWidget(qt.QLabel(_axis + ":"))
+            resampleLayout.addWidget(_box)
+        resampleLayout.addStretch(1)
+        fl.addRow("Resample (0 < f <= 1):", resampleLayout)
+
+        pathLayout = qt.QHBoxLayout()
+        self.voxelOutputPath = qt.QLineEdit(
+            os.path.join(_MODULE_DIR, "voxel", "voxel.dat"))
+        self.voxelOutputPath.setToolTip("Ruta del archivo voxel.dat a generar.")
+        pathLayout.addWidget(self.voxelOutputPath)
+        self.voxelBrowseButton = qt.QPushButton("...")
+        self.voxelBrowseButton.setMaximumWidth(30)
+        self.voxelBrowseButton.connect('clicked(bool)', self.onBrowseVoxelOutput)
+        pathLayout.addWidget(self.voxelBrowseButton)
+        fl.addRow("Salida:", pathLayout)
+
+        self.voxelGenerateButton = qt.QPushButton("Generar voxel.dat")
+        self.voxelGenerateButton.setToolTip(
+            "Aplica el mapeo, orienta, comprime con RLE y escribe el voxel.dat para PHITS.")
+        self.voxelGenerateButton.connect('clicked(bool)', self.onGenerateVoxel)
+        fl.addRow(self.voxelGenerateButton)
+
+        self.voxelStatusLabel = qt.QLabel(
+            "Seleccione la mascara gris, cargue los gray_levels y presione Generar voxel.dat.")
+        self.voxelStatusLabel.setWordWrap(True)
+        self.voxelStatusLabel.setStyleSheet("color: #666; font-size: 11px;")
+        fl.addRow(self.voxelStatusLabel)
+
+        self.voxelReportText = qt.QTextEdit()
+        self.voxelReportText.setReadOnly(True)
+        self.voxelReportText.setMaximumHeight(120)
+        self.voxelReportText.setPlaceholderText("Resultado de la generacion del voxel.dat...")
+        fl.addRow(self.voxelReportText)
+
+        # Autocarga: la config de universos (json) se aplica sola al elegir
+        # o cambiar la mascara gris, sin presionar 'Cargar gray_levels'.
+        self.voxelMaskSelector.connect('currentNodeChanged(vtkMRMLNode*)',
+                                       self._onVoxelMaskChanged)
+        try:
+            if getattr(self, '_organ_config', None) is None:
+                self._organ_config = self._loadOrganConfig()
+            if self.voxelMaskSelector.currentNode() is not None:
+                self.onLoadVoxelLevels(silent=True)
+            else:
+                self._onVoxelMaskChanged(None)
+        except Exception as e:
+            _log(f"_setupVoxelUI: autocarga de niveles fallo: {e}")
 
     def _masksConfigInfo(self):
         """Devuelve una descripcion corta de la config de ROIs disponible."""
@@ -1250,6 +1710,17 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
             )
             self._masksFillTable(result)
             self.masksReportText.plainText = logic.buildReport(result)
+            try:
+                if result.get('combined_gray_node') is not None:
+                    self.voxelMaskSelector.setCurrentNode(result['combined_gray_node'])
+                # Solo refrescar si hay una mascara gris seleccionada: si se genero
+                # sin combinado, el selector puede haber quedado vacio y
+                # onLoadVoxelLevels mostraria un error innecesario.
+                if self.voxelMaskSelector.currentNode() is not None:
+                    self.onLoadVoxelLevels()
+            except Exception:
+                _log("onGenerateMasks: no se pudo refrescar el tab Voxelizado:\n"
+                     + traceback.format_exc())
             slicer.util.infoDisplay(
                 f"Mascaras generadas: {len(result.get('individual_nodes', []))} individuales\n"
                 f"Segmentos procesados: {result.get('n_segments', 0)} / {len(result.get('rows', []))} filas\n"
@@ -2223,6 +2694,9 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
                 createIndividual=createIndividual, createCombined=createCombined,
                 skipEmpty=skipEmpty, referenceNode=referenceNode)
 
+        # Limpiar labelmaps de una corrida anterior (ruta volumen/labelmap).
+        self._removeOldMaskNodes(keepNodes=(structureNode, referenceNode))
+
         arr = slicer.util.arrayFromVolume(structureNode)
         if arr is None or np.asarray(arr).ndim != 3:
             raise ValueError("El volumen de estructura debe ser 3D.")
@@ -2382,15 +2856,37 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
 
         El emparejamiento segmento -> ROI de la config es POR NOMBRE del segmento,
         comparado con `_normName` (mayusculas, sin acentos, separadores a espacio).
-        Los segmentos que no tienen ROI en la config igual se exportan, marcados
-        como 'SIN CONFIG' y con un valor secuencial que no colisiona con gray_level.
+
+        Los gray_level provienen EXCLUSIVAMENTE de `json/organ_config.jsonc`. Los
+        segmentos que no tienen ROI en la config se exportan igualmente como
+        labelmaps individuales marcados 'SIN CONFIG', se excluyen del labelmap
+        combinado y NO reciben gray_level (quedan con gray_level 0); el modulo no
+        inventa valores para ellos.
         """
         import traceback
 
-        # Indice de la config por nombre normalizado
+        # Indice de la config por nombre normalizado, y por nombre "compacto"
+        # (sin espacios) para tolerar variantes como 'RT OPTIC NERVE' vs 'RTOPTIC NERVE'.
+        def _compact(s):
+            return _normName(s).replace(' ', '')
+
         cfg_by_name = {}
         for row in config:
             cfg_by_name[_normName(row.get('name', ''))] = row
+            cfg_by_name.setdefault(_compact(row.get('name', '')), row)
+
+        # El aire vive en la clave 'aire' del jsonc (no en 'rois'): fila pseudo
+        # con gray_level 0 para que el aire quede como fondo (universo U=1).
+        _AIR_ROW = {'name': 'AIRE', 'gray_level': 0, 'universo': 1, 'nmesh': -1}
+        for _alias in ('AIRE', 'AIR', 'EXTERIOR', 'AIREEXTERIOR'):
+            cfg_by_name.setdefault(_alias, _AIR_ROW)
+
+        def _matchConfigRow(seg_name):
+            """Devuelve la fila de config para un segmento, o None."""
+            key = _normName(seg_name)
+            if key in cfg_by_name:
+                return cfg_by_name[key]
+            return cfg_by_name.get(_compact(seg_name))
 
         # --- Volumen de referencia: define la geometria de salida ---
         ref_node = referenceNode
@@ -2398,6 +2894,19 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
             for node in slicer.mrmlScene.GetNodesByClass("vtkMRMLScalarVolumeNode"):
                 name = node.GetName() or ""
                 if any(x in name for x in ['Kerma', 'Gamma', 'Dosis', 'DVH', 'Temp']):
+                    continue
+                # Un vtkMRMLLabelMapVolumeNode ES un vtkMRMLScalarVolumeNode: si no se
+                # descarta, ref_node puede terminar siendo un labelmap del propio
+                # modulo (p.ej. Mascaras_Combinadas_Gris de una corrida anterior),
+                # que luego queda protegido por _removeOldMaskNodes y hace que el
+                # combinado nuevo se cree como _1, _2... acumulando duplicados.
+                if node.IsA("vtkMRMLLabelMapVolumeNode"):
+                    continue
+                if (name.startswith(_PREFIX_INDIVIDUAL)
+                        or name == _NAME_COMBINED
+                        or name.startswith(_NAME_COMBINED + "_")
+                        or name == _NAME_COMBINED_GRAY
+                        or name.startswith(_NAME_COMBINED_GRAY + "_")):
                     continue
                 try:
                     arr_ref = slicer.util.arrayFromVolume(node)
@@ -2408,6 +2917,10 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
                     continue
         if ref_node is None:
             raise ValueError("Selecciona un volumen de referencia para definir la geometria de salida.")
+
+        # Limpiar labelmaps de una corrida anterior para no dejar duplicados
+        # (_1, _2...) que confundian al tab Voxelizado.
+        self._removeOldMaskNodes(keepNodes=(structureNode, ref_node))
 
         # --- Representacion binaria: asegurarla antes de extraer arrays ---
         if hasattr(structureNode, 'CreateBinaryLabelmapRepresentation'):
@@ -2427,22 +2940,13 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
             seg_name = seg.GetName() if seg else seg_id
             seg_items.append((seg_id, seg_name))
 
-        # Valores secuenciales para segmentos/ROIs sin gray_level util.
-        # Los segmentos sin config arrancan en 256 para no colisionar con gray_level validos.
-        used_vals = set(int(r.get('gray_level', 0)) for r in config
-                        if int(r.get('gray_level', 0)) > 0)
-
-        def _nextSeq(start):
-            v = int(start)
-            while v <= 0 or v in used_vals:
-                v += 1
-            used_vals.add(v)
-            return v
-
-        has_unmatched = any(_normName(nm) not in cfg_by_name for _, nm in seg_items)
+        # Los gray_level salen UNICAMENTE de la config (organ_config.jsonc).
+        # No se inventan valores para segmentos sin ROI en la config.
         gray_levels = [int(r.get('gray_level', 0)) for r in config]
         max_gl = max(gray_levels) if gray_levels else 0
-        combined_dtype = np.uint16 if (has_unmatched or max_gl > 255) else np.uint8
+        combined_dtype = np.uint16 if max_gl > 255 else np.uint8
+        _log(f"generateMasks: gray_levels desde organ_config.jsonc = "
+             f"{sorted(set(g for g in gray_levels if g > 0))}")
 
         # --- Geometria de salida (la del volumen de referencia) ---
         ref_arr = np.asarray(slicer.util.arrayFromVolume(ref_node))
@@ -2471,10 +2975,11 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
         seg_combined_entries = []
 
         for idx, (seg_id, seg_name) in enumerate(seg_items):
-            cfg_row = cfg_by_name.get(_normName(seg_name))
+            cfg_row = _matchConfigRow(seg_name)
             if cfg_row is None:
                 sin_config.append(seg_name)
                 _log(f"generateMasks: segmento '{seg_name}' sin ROI en la config")
+                _log(f"generateMasks: segmento '{seg_name}' (SIN CONFIG) no se incluye en el combinado")
 
             # Extraer el array binario del segmento en la geometria de referencia
             arr = None
@@ -2508,18 +3013,20 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
             mask = (arr > 0)
             nvox = int(np.count_nonzero(mask))
 
-            # Valor en el labelmap combinado
+            # Valor en el labelmap combinado: SIEMPRE desde organ_config.jsonc.
+            # Un segmento sin ROI en la config no recibe gray_level inventado.
             if cfg_row is not None:
                 gl = int(cfg_row.get('gray_level', 0))
-                if gl <= 0:
-                    gl = _nextSeq(1)
-                estado = 'OK' if nvox > 0 else 'VACIA'
+                if gl > 0:
+                    estado = 'OK' if nvox > 0 else 'VACIA'
+                else:
+                    estado = 'SIN GRAY_LEVEL'
             else:
-                gl = _nextSeq(max(255, 1) + 1)
+                gl = 0
                 estado = 'SIN CONFIG'
 
             is_body = ('BODY' in _normName(seg_name)) or ('CUERPO' in _normName(seg_name))
-            if createCombined and nvox > 0:
+            if createCombined and nvox > 0 and cfg_row is not None and gl > 0:
                 seg_combined_entries.append((mask, gl, seg_name, nvox, is_body))
             counts += mask.astype(np.uint16)
             seg_color = structureNode.GetSegmentation().GetSegment(seg_id).GetColor()
@@ -2610,7 +3117,7 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
             _log(f"generateMasks: CONFLICTO valor {gl} compartido por {names}")
 
         empty_rois = [row['name'] for row in rows
-                      if row['nvox'] == 0 and row.get('estado') in ('VACIA', 'SIN CONFIG')]
+                      if row['nvox'] == 0 and row.get('estado') in ('VACIA', 'SIN CONFIG', 'SIN GRAY_LEVEL')]
 
         result = {
             'rows': rows,
@@ -2719,6 +3226,35 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
         hue = (index * 0.61803398875) % 1.0  # golden ratio para buena distribucion
         r, g, b = colorsys.hsv_to_rgb(hue, 0.75, 0.9)
         return (r, g, b)
+
+    def _removeOldMaskNodes(self, keepNodes=()):
+        """Borra los labelmaps generados por el modulo en una corrida anterior.
+
+        Evita nodos duplicados tipo 'Mascaras_Combinadas_Gris_1', '_2' que hacian
+        que el tab Voxelizado siguiera leyendo una mascara vieja (con gray_level
+        inventados). Nunca borra los nodos pasados en `keepNodes` (entrada/CT).
+        """
+        keep = set()
+        for n in keepNodes:
+            if n is not None:
+                keep.add(n.GetID())
+        removed = []
+        try:
+            for node in list(slicer.mrmlScene.GetNodesByClass("vtkMRMLLabelMapVolumeNode")):
+                if node.GetID() in keep:
+                    continue
+                name = node.GetName() or ""
+                if name.startswith(_PREFIX_INDIVIDUAL) or name == _NAME_COMBINED \
+                        or name == _NAME_COMBINED_GRAY \
+                        or name.startswith(_NAME_COMBINED + "_") \
+                        or name.startswith(_NAME_COMBINED_GRAY + "_"):
+                    removed.append(name)
+                    slicer.mrmlScene.RemoveNode(node)
+        except Exception as e:
+            _log(f"_removeOldMaskNodes: error: {e}")
+        if removed:
+            _log(f"_removeOldMaskNodes: eliminados {len(removed)} nodos previos: {removed}")
+        return removed
 
     def _createLabelmapVolume(self, mask_array, referenceNode, name, pixel_colors=None,
                               transformNodeID=None, grayscale=False):
@@ -2893,6 +3429,184 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
             return {'contacts': contacts, 'collision': contacts > 0}
         except Exception as e:
             _log(f"detectCollisions: error: {e}")
+            return None
+
+    def _mapVoxelOrientation(self, arr, orientation):
+        """Reordena el array de Slicer (k,j,i) al orden y orientacion que espera PHITS."""
+        M = np.transpose(arr, (1, 2, 0))  # Slicer (k,j,i) -> (Y, X, Z)
+        if orientation == 'Axial':
+            M = np.transpose(M, (1, 0, 2))
+            M = M[:, ::-1, :]
+            M = np.flip(M, axis=2)
+        elif orientation == 'Sagital':
+            M = np.transpose(M, (2, 1, 0))
+            M = M[:, ::-1, :]
+            M = np.flip(M, axis=2)
+        elif orientation == 'Coronal':
+            M = np.transpose(M, (2, 0, 1))
+            M = M[:, ::-1, :]
+            M = np.flip(M, axis=2)
+        else:
+            raise ValueError(f"Orientacion no valida: {orientation}")
+        return M
+
+    def _rle_encode(self, values):
+        """Run-length encoding estilo PHITS: valor y -(L-1) cuando la corrida es L > 1."""
+        arr = np.asarray(values).ravel()
+        if arr.size == 0:
+            return []
+        change = np.flatnonzero(arr[1:] != arr[:-1]) + 1
+        starts = np.concatenate(([0], change))
+        ends = np.concatenate((change, [arr.size]))
+        lengths = ends - starts
+        vals = arr[starts]
+        out = []
+        for v, L in zip(vals, lengths):
+            out.append(int(v))
+            if L > 1:
+                out.append(-(int(L) - 1))
+        return out
+
+    def resampleMaskVolume(self, maskNode, factorX, factorY, factorZ):
+        """Submuestrea un labelmap (nearest-neighbour) y deja el nodo nuevo en la escena.
+
+        Los factores deben cumplir 0 < f <= 1. Con f = 1 en los tres ejes
+        devuelve el mismo nodo de entrada, sin crear nada nuevo.
+        """
+        try:
+            if maskNode is None:
+                return None
+            factors = [float(factorX), float(factorY), float(factorZ)]
+            for f in factors:
+                if f <= 0.0 or f > 1.0:
+                    _log(f"resampleMaskVolume: factor invalido {f} (debe ser 0 < f <= 1)")
+                    return None
+            if all(abs(f - 1.0) < 1e-9 for f in factors):
+                return maskNode
+
+            arr = slicer.util.arrayFromVolume(maskNode)
+            if arr is None:
+                _log("resampleMaskVolume: arrayFromVolume devolvio None")
+                return None
+            if arr.ndim != 3:
+                _log(f"resampleMaskVolume: array con {arr.ndim} dimensiones, se esperaba 3")
+                return None
+
+            # El array de Slicer es (k, j, i) = (Z, Y, X)
+            axes_factors = [factors[2], factors[1], factors[0]]
+            spacing = maskNode.GetSpacing()                       # (sx, sy, sz)
+            axes_spacing = [spacing[2], spacing[1], spacing[0]]   # (sz, sy, sx)
+
+            new_shape = [max(1, int(round(arr.shape[a] * axes_factors[a])))
+                         for a in range(3)]
+            idx = []
+            for a in range(3):
+                f = axes_factors[a]
+                n = np.arange(new_shape[a], dtype=np.float64)
+                i = np.rint((n + 0.5) / f - 0.5).astype(np.int64)
+                np.clip(i, 0, arr.shape[a] - 1, out=i)
+                idx.append(i)
+            resampled = arr[np.ix_(idx[0], idx[1], idx[2])]
+
+            name = (f"{maskNode.GetName()}_resample_"
+                    f"{factors[0]:g}x{factors[1]:g}x{factors[2]:g}")
+            old = slicer.mrmlScene.GetFirstNodeByName(name)
+            if old is not None:
+                slicer.mrmlScene.RemoveNode(old)
+
+            node = slicer.mrmlScene.AddNewNodeByClass(
+                "vtkMRMLLabelMapVolumeNode", name)
+            slicer.util.updateVolumeFromArray(
+                node, np.ascontiguousarray(resampled))
+            node.SetOrigin(maskNode.GetOrigin())
+
+            new_spacing_zyx = [axes_spacing[a] / axes_factors[a] for a in range(3)]
+            node.SetSpacing(new_spacing_zyx[2], new_spacing_zyx[1],
+                            new_spacing_zyx[0])
+
+            # Copiar la orientacion IJK->RAS escalando cada columna por el nuevo spacing
+            mat = vtk.vtkMatrix4x4()
+            maskNode.GetIJKToRASMatrix(mat)
+            out = vtk.vtkMatrix4x4()
+            for c in range(3):
+                col = [mat.GetElement(r, c) for r in range(3)]
+                norm = float(np.linalg.norm(col))
+                scale = (new_spacing_zyx[2 - c] / norm) if norm > 0 else 1.0
+                for r in range(3):
+                    out.SetElement(r, c, col[r] * scale)
+            for r in range(4):
+                out.SetElement(r, 3, mat.GetElement(r, 3))
+            node.SetIJKToRASMatrix(out)
+
+            tid = maskNode.GetTransformNodeID()
+            if tid:
+                node.SetAndObserveTransformNodeID(tid)
+
+            node.CreateDefaultDisplayNodes()
+            try:
+                src_disp = maskNode.GetDisplayNode()
+                dst_disp = node.GetDisplayNode()
+                if src_disp is not None and dst_disp is not None:
+                    dst_disp.SetAndObserveColorNodeID(src_disp.GetColorNodeID())
+            except Exception:
+                pass
+
+            _log(f"resampleMaskVolume: '{maskNode.GetName()}' {tuple(arr.shape)} -> "
+                 f"{tuple(resampled.shape)} factores=({factors[0]:g},{factors[1]:g},"
+                 f"{factors[2]:g}) spacing={tuple(node.GetSpacing())}")
+            return node
+        except Exception as e:
+            _log(f"resampleMaskVolume: error: {e}")
+            return None
+
+    def generateVoxelDat(self, maskNode, universo_by_gray, orientation, outputPath):
+        """Genera el voxel.dat de PHITS desde la mascara gris. Retorna dict o None."""
+        try:
+            arr = slicer.util.arrayFromVolume(maskNode)
+            if arr is None:
+                _log("generateVoxelDat: arrayFromVolume devolvio None")
+                return None
+
+            arr_int = np.rint(np.asarray(arr, dtype=np.float64)).astype(np.int64)
+            M = self._mapVoxelOrientation(arr_int, orientation)
+
+            universo_by_gray = {int(k): int(v) for k, v in universo_by_gray.items()}
+            present = [int(v) for v in np.unique(M)]
+            missing = [v for v in present if v not in universo_by_gray]
+            if missing:
+                _log(f"generateVoxelDat: gray_levels sin universo asignado: {missing}")
+                return None
+
+            mapped = np.zeros(M.shape, dtype=np.int32)
+            for gl, uni in universo_by_gray.items():
+                mapped[M == gl] = uni
+
+            flat = mapped.flatten(order='F')
+            encoded = self._rle_encode(flat)
+
+            out_dir = os.path.dirname(outputPath)
+            if out_dir:
+                os.makedirs(out_dir, exist_ok=True)
+
+            per_line = 21
+            with open(outputPath, 'w') as f:
+                for i in range(0, len(encoded), per_line):
+                    chunk = encoded[i:i + per_line]
+                    f.write('     ' + ' '.join(str(x) for x in chunk) + ' \n')
+
+            universos = sorted(set(universo_by_gray[gl] for gl in present))
+            _log(f"generateVoxelDat: {outputPath} shape={M.shape} orient={orientation} "
+                 f"voxeles={int(flat.size)} valores_rle={len(encoded)} universos={universos}")
+            return {
+                'path': outputPath,
+                'values': len(encoded),
+                'voxels': int(flat.size),
+                'shape': tuple(int(s) for s in M.shape),
+                'orientation': orientation,
+                'universos': universos,
+            }
+        except Exception as e:
+            _log(f"generateVoxelDat: error: {e}")
             return None
 
     # ------------------------------------------------------------------
