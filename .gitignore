@@ -1,0 +1,7 @@
+# Salida local de herramientas (generadas, no versionar)
+.foxcode/
+graphify-out/
+ruvector.db
+
+# Dosimetria PHITS real (archivos de ~150/50 MB, no versionar)
+BNCT_PositionOptimizer/data/
