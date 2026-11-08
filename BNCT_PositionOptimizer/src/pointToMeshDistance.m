@@ -57,7 +57,11 @@ for t = 1:m
     % --- prefiltro por esfera envolvente (cota inferior de la distancia) ---
     dx = points - cent(t, :);
     d2c = sum(dx.^2, 2);
-    lb = (sqrt(max(d2c, 0)) - rad(t)).^2;    % (|p-c| - r)^2 <= d(p,tri)^2
+    % (|p-c| - r)^2 <= d(p,tri)^2 SOLO si |p-c| >= r; dentro de la esfera la
+    % cota real es 0 (sin clamp, (negativo)^2 infla la cota y saltea el
+    % triangulo mas cercano cuando el punto cae dentro de su esfera).
+    gap = sqrt(max(d2c, 0)) - rad(t);
+    lb = (max(gap, 0)).^2;
     cand = lb < dmin.^2;
     if ~any(cand)
         continue

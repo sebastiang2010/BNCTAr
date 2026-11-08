@@ -96,14 +96,18 @@ nx = numel(gridX); ny = numel(gridY); nz = numel(gridZ);
 origin = [gridX(1), gridY(1), gridZ(1)];
 
 % ------------------------- rasterizar superficie -------------------------
-occ = rasterizarSuperficie(pts, fcs, origin, res, [nx ny nz]);
-
-% ------------------------- relleno del solido -------------------------
 switch fillMethod
     case 'parity'
+        % Malla cerrada: rasterizado por columnas + relleno solido por paridad
+        occ = rasterizarSuperficie(pts, fcs, origin, res, [nx ny nz]);
         occ = rellenarParidad(pts, fcs, gridX, gridY, gridZ, origin, res, occ);
     case 'shell'
-        occ = imdilate(occ, ones(3,3,3));   % pared de ~1 voxel de espesor
+        % Parche ABIERTO (p. ej. cono del haz sin tapa en la boca x=0): no
+        % hay clasificacion de interior. Rasterizado FINO: solo voxels cuyo
+        % centro dista <= res/2 del plano de algun triangulo, para no
+        % engordar la banda cuando los triangulos son grandes u oblicuos.
+        occ = rasterizarSuperficieFina(pts, fcs, origin, res, [nx ny nz]);
+        occ = imdilate(occ, ones(3,3,3));   % pared de ~1-2 voxels de espesor
 end
 
 % ------------------------- SDF (positivo afuera) -------------------------
@@ -281,5 +285,82 @@ for c = 1:size(cols, 1)
             occ(ii, jj, k1:k2) = true;
         end
     end
+end
+end
+
+function occ = rasterizarSuperficieFina(pts, fcs, origin, res, sizeGrid)
+% Rasterizado fino para parches abiertos (fillMethod='shell').
+% Marca true SOLO en los voxels cuyo centro dista <= res/2 del plano de
+% algun triangulo y cuya proyeccion cae dentro del triangulo (test
+% baricentrico 2D sobre el plano perpendicular al eje dominante de la
+% normal). A diferencia de rasterizarSuperficie, NO marca el rango
+% completo del bbox a lo largo del eje dominante: con triangulos grandes
+% u oblicuos (cono real del haz) eso engordaba la banda ocupada decenas
+% de voxels y generaba distancias negativas fantasma dentro del tunel.
+nx = sizeGrid(1); ny = sizeGrid(2); nz = sizeGrid(3);
+occ = false(nx, ny, nz);
+escala = norm(max(pts, [], 1) - min(pts, [], 1));   % mm
+umbral = 1e-12 * escala^2;
+semiVoxel = res / 2;
+
+nT = size(fcs, 1);
+for t = 1:nT
+    v1 = pts(fcs(t,1), :);
+    v2 = pts(fcs(t,2), :);
+    v3 = pts(fcs(t,3), :);
+
+    ijk  = ([v1; v2; v3] - origin) / res + 1;      % bbox en indices
+    iMin = max(1, floor(min(ijk, [], 1)) - 1);
+    iMax = min(sizeGrid(:).', ceil(max(ijk, [], 1)) + 1);
+    if any(iMin > iMax)
+        continue
+    end
+
+    nrm = cross(v2 - v1, v3 - v1);
+    n2 = sum(nrm.^2);
+    if n2 <= umbral
+        continue;                                  % triangulo degenerado
+    end
+    [~, ax] = max(abs(nrm));
+    uv = setdiff(1:3, ax);
+
+    % candidatos: centros de voxel del bbox (con 1 voxel de holgura)
+    [I, J, K] = ndgrid(iMin(1):iMax(1), iMin(2):iMax(2), iMin(3):iMax(3));
+    centros = origin + ([I(:), J(:), K(:)] - 1) * res;   % mm
+
+    % distancia con signo al plano del triangulo
+    dPlano = ((centros - v1) * nrm.') / sqrt(n2);
+    cerca = abs(dPlano) <= semiVoxel;
+    if ~any(cerca)
+        continue
+    end
+
+    % test baricentrico 2D (mismo convenio que rasterizarSuperficie)
+    uq = centros(cerca, uv(1)); vq = centros(cerca, uv(2));
+    u1 = v1(uv(1)); v1c = v1(uv(2));
+    u2 = v2(uv(1)); v2c = v2(uv(2));
+    u3 = v3(uv(1)); v3c = v3(uv(2));
+    det = (u2 - u1) * (v3c - v1c) - (u3 - u1) * (v2c - v1c);
+    if abs(det) <= umbral
+        continue
+    end
+    e1 = (u2 - u1) .* (vq - v1c) - (v2c - v1c) .* (uq - u1);
+    e2 = (u3 - u2) .* (vq - v2c) - (v3c - v2c) .* (uq - u2);
+    e3 = (u1 - u3) .* (vq - v3c) - (v1c - v3c) .* (uq - u3);
+    s = sign(det);
+    dentro = (s*e1 >= 0) & (s*e2 >= 0) & (s*e3 >= 0);
+    if ~any(dentro)
+        continue
+    end
+
+    lin = sub2ind([nx ny nz], I(cerca), J(cerca), K(cerca));
+    occ(lin(dentro)) = true;
+end
+
+% garantizar presencia de los vertices (triangulos finos/degenerados)
+vertices = pts(unique(fcs(:)), :);
+for q = 1:size(vertices, 1)
+    idx = min(max(round((vertices(q,:) - origin) / res + 1), 1), sizeGrid(:).');
+    occ(idx(1), idx(2), idx(3)) = true;
 end
 end

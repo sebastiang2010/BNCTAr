@@ -69,22 +69,25 @@ ver('stats')          % Statistics and Machine Learning Toolbox
 
 ```
 BNCT_PositionOptimizer/
-├── run_optimizer.m      % demo end-to-end (entry point)
+├── run_optimizer.m      % demo end-to-end (entry point; modoDatos = 'demo'|'real')
 ├── README.md
-├── src/                 % 15 funciones, todas públicas
-└── data/                % reservado para datos del usuario (vacío en el repo)
+├── src/                 % 17 funciones, todas públicas
+└── data/                % .out reales PHITS (mesh-neutron.out, mesh-photon.out)
 ```
 
 ### 4.1 Módulos
 
 | Archivo | Rol |
 |---|---|
-| `run_optimizer.m` | Demo: arma datos sintéticos, precomputa SDF, corre la optimización, valida 3 finalistas e imprime el resumen. |
+| `run_optimizer.m` | Demo: arma datos sintéticos, precomputa SDF, corre la optimización, valida 3 finalistas e imprime el resumen. Con `modoDatos='real'` sustituye la dosis por la dosimetría real de `data/`. |
 | `src/makeDemoData.m` | Genera paciente elipsoidal + tumor + OARs, reactor no convexo, dosis sintética y parámetros radiobiológicos de ejemplo. |
 | `src/loadPatient.m` | Lee una máscara NIfTI, la binariza, extrae la superficie con `isosurface` y arma la grilla en mm. |
 | `src/loadReactorSTL.m` | Carga la geometría del reactor desde `.stl` o `.vtk` ASCII y normaliza a `points`/`faces`. |
-| `src/loadPHITSDose.m` | Carga y valida las 4 componentes de dosis PHITS (`.mat`, directorio de `.mat` o struct en memoria). |
-| `src/signedDistanceMap3D.m` | Rasteriza la malla y precomputa el SDF firmado en una grilla de voxels (relleno por paridad). |
+| `src/loadPHITSDose.m` | Carga y valida las 4 componentes de dosis PHITS: modo real (`.out` crudos), `.mat`, directorio o struct en memoria. |
+| `src/leerPHITSNeutron.m` | Lectura de `mesh-neutron.out` (3 msets → Boro/Fast/Thermal). Adaptado no-interactivo de `f_lectura_phits_neutron.m` (código del usuario, autoridad de semántica). |
+| `src/leerPHITSGamma.m` | Lectura de `mesh-photon.out` (1 mset → gamma). Adaptado no-interactivo de `f_lectura_phits_gamma.m` (ídem). |
+| `src/clipMeshBox.m` | Recorta una malla a una caja: conserva solo triángulos con los 3 vértices dentro (p. ej. descartar la envolvente lejana del cono) y renumera índices. |
+| `src/signedDistanceMap3D.m` | Rasteriza la malla y precomputa el SDF firmado en una grilla de voxels. `fillMethod='parity'` para mallas cerradas (relleno sólido); `'shell'` para parches abiertos (rasterizado fino de banda ~1 voxel + dilatación; sesgo conservador ≈ res·2 del lado de la pared). |
 | `src/eul2rot.m` | Matriz de rotación $R = R_z R_y R_x$ a partir de ángulos de Euler en grados. |
 | `src/rigidTransform.m` | Arma la homogénea 4×4 paciente → haz a partir de `p`. |
 | `src/transformPatient.m` | Transforma la superficie del paciente y muestrea la dosis en tumor y OARs (Nivel A). |
@@ -95,6 +98,8 @@ BNCT_PositionOptimizer/
 | `src/objectiveFunction.m` | Función de costo escalonada que combina colisión, máscaras vacías, NTCP y UTCP. |
 | `src/optimizePosition.m` | Driver de optimización: `surrogateopt`, `ga`, `patternsearch`, `bayesopt` o `grid`, con historial. |
 | `src/validatePHITS.m` | Valida finalistas (colisión exacta + robustez) y exporta el bundle para el recálculo PHITS. |
+| `src/exportarParaSlicer.m` | Exporta bundle visualizable en 3D Slicer (convención RAS): puerto + paciente por pose (VTK espejados), dosis compuesta (NIfTI con affine RAS en sform), `transform.json` y `pose_<i>.txt`. Ver §10. |
+| `tests/testColisiones.m` | Casos conocidos de colisión: caja cerrada (parity), parche abierto (shell) y cono real. Ejecutar con `runtests('tests')`. |
 
 ### 4.2 Flujo de datos
 
@@ -122,7 +127,14 @@ run_optimizer
 ```
 
 `run_optimizer.m` hace todo por su cuenta: agrega `src/` al path, cambia el directorio de trabajo
-al del proyecto (con `onCleanup` para restaurarlo) y ejecuta el flujo completo.
+al del proyecto (con `onCleanup` para restaurarlo) y ejecuta el flujo completo. Para usar la
+dosimetría real de cilindro edite la variable del encabezado del script:
+
+```matlab
+modoDatos = 'real';   % default 'demo' (dosis sintética)
+```
+
+(ver sección 6.3.1: unidades Gy/source, `doseScale` y cobertura de la grilla).
 
 ### 5.1 Qué imprime
 
@@ -227,11 +239,87 @@ contra `wallStruct`. Las mallas se asumen en **mm** y en el **marco del haz**.
 
 ### 6.3 Dosis PHITS
 
-`loadPHITSDose` acepta tres formas de entrada:
+#### 6.3.1 Dosimetría real de cilindro (modo real, `.out` crudos)
+
+Los archivos reales ya están en `data/`:
+
+| Archivo | Tally PHITS | Contenido | Páginas |
+|---|---|---|---|
+| `data/mesh-neutron.out` | `[ T-Track ]` (KERMA), `part = neutron` | 3 msets × 200 slices en z | 600 |
+| `data/mesh-photon.out` | `[ T-Deposit ]`, `part = photon` | 1 mset × 200 slices en z | 200 |
+
+Grilla común: `nx=100, ny=200, nz=200`, paso `0.3 cm` (el header PHITS está en cm; el loader
+convierte a mm ×10), `x∈[0,30] cm`, `y∈[-30,30] cm`, `z∈[-30,30] cm`. Los centros de voxel
+quedan en `gridX = 1.5:3:298.5 mm`, `gridY = gridZ = -298.5:3:298.5 mm`.
+
+**Significado de los 3 msets** (orden de aparición en `mesh-neutron.out`, verificado en los
+headers de página; convención idéntica a `SlicerModule/BNCT.py comp_names`):
+
+| mset | Componente doseData | Campo |
+|---|---|---|
+| 1 | Boron | `.dose_B` |
+| 2 | FastNeutron | `.dose_H` |
+| 3 | ThermalNeutron | `.dose_N` |
+| photon (archivo aparte) | Gamma_Photon | `.dose_gamma` |
+
+**Unidades — Gy/source y `doseScale`.** El título del tally dice
+`Dose [Gy/source] using [t-deposit] (KERMA)`: cada valor es dosis **por partícula fuente**
+(del archivo PHITS simulado), no la dosis absoluta del tratamiento. El loader **no aplica**
+ninguna escala: registra el factor en `doseData.doseScale` (default `1.0`) y deja en
+`doseData.units = 'Gy/source'`. Cuando el usuario decida el escalado (por número de
+fuentes, normalización de prescripción, etc.) debe multiplicar él mismo las matrices, por
+ejemplo:
 
 ```matlab
+doseData = loadPHITSDose(spec);
+factor = 2.5e13;                                % fuentes por sesión (ejemplo)
+doseData.dose_B     = doseData.dose_B     * factor;
+doseData.dose_H     = doseData.dose_H     * factor;
+doseData.dose_N     = doseData.dose_N     * factor;
+doseData.dose_gamma = doseData.dose_gamma * factor;
+doseData.doseScale  = doseData.doseScale * factor;
+doseData.units      = 'Gy';
+```
+
+Los helpers de lectura (`src/leerPHITSNeutron.m`, `src/leerPHITSGamma.m`) son adaptaciones
+no interactivas **vendidas del código del usuario** (`f_lectura_phits_neutron.m` /
+`f_lectura_phits_gamma.m` del directorio padre, que son la autoridad de semántica). Las
+desviaciones mínimas (ruta por argumento en vez de `uigetfile`, conversión rápida
+`sscanf` con fallback literal, corrección de la rama divisible que crasheaba con
+`nx≠ny`, y volteo en `y` porque el header PHITS declara `y = ny,1,-1` — igual corrección
+que hace `bnct.py` con `flipud`) están documentadas en la cabecera de cada helper.
+
+**Uso mínimo en modo real** (lo que hace `run_optimizer.m` con `modoDatos = 'real'`):
+
+```matlab
+doseData = loadPHITSDose(struct( ...
+    'neutronFile', 'data/mesh-neutron.out', ...
+    'photonFile',  'data/mesh-photon.out'), struct('verbose', true));
+% doseData.gridX/gridY/gridZ en mm (ndgrid), dose_B/H/N/gamma en Gy/source,
+% doseData.doseScale = 1, doseData.units = 'Gy/source', doseData.frame = 'haz'.
+```
+
+También acepta `loadPHITSDose('data/')` (detecta `*neutron*.out` y `*photon*.out`) o un
+`.out` suelto cuyo nombre contenga `neutron`/`photon`.
+
+`doseData.frame = 'haz'`: los mapas quedan fijos en el marco del tally PHITS (el mundo de
+la simulación con el cilindro). Con `T = rigidTransform(p)` el paciente se mapea a ese
+marco y la dosis se muestrea en `D_k(T*r)` (estrategia Nivel A de la sección 11). Con
+`p = 0` el paciente demo no coincide con el cilindro simulado: la grilla real cubre
+`X ∈ [1.5, 298.5] mm` y `Y/Z ∈ [-298.5, 298.5] mm`; los voxels de paciente fuera de ese
+dominio reciben 0 Gy (`interpn` con `extrapval=0`) y `transformPatient` los cuenta
+(`.voxelsFueraDominio`). `run_optimizer` imprime el porcentaje de tumor cubierto al
+activar el modo real.
+
+#### 6.3.2 Formato canónico y entradas alternativas
+
+`loadPHITSDose` acepta cuatro formas de entrada:
+
+```matlab
+doseData = loadPHITSDose(struct('neutronFile', 'data/mesh-neutron.out', ...
+                                'photonFile',  'data/mesh-photon.out')); % (0) modo real
 doseData = loadPHITSDose('dosis_phits.mat');     % (a) un .mat con el struct
-doseData = loadPHITSDose('carpeta_dosis/');      % (b) un directorio de .mat
+doseData = loadPHITSDose('carpeta_dosis/');      % (b) un directorio de .mat (o .out)
 doseData = loadPHITSDose(miStruct);              % (c) struct ya armado
 ```
 
@@ -240,19 +328,19 @@ Formato canónico que exige (y devuelve normalizado):
 | Campo | Tamaño | Unidad | Origen PHITS |
 |---|---|---|---|
 | `.gridX/.gridY/.gridZ` | `1xn` | mm | Ejes `ndgrid` |
-| `.dose_B` | `[nx ny nz]` | Gy | boro |
-| `.dose_H` | `[nx ny nz]` | Gy | neutrones rápidos |
-| `.dose_N` | `[nx ny nz]` | Gy | neutrones térmicos / epitermales |
-| `.dose_gamma` | `[nx ny nz]` | Gy | fotones |
+| `.dose_B` | `[nx ny nz]` | Gy (o Gy/source) | boro (mset 1) |
+| `.dose_H` | `[nx ny nz]` | Gy (o Gy/source) | neutrones rápidos (mset 2) |
+| `.dose_N` | `[nx ny nz]` | Gy (o Gy/source) | neutrones térmicos / epitermales (mset 3) |
+| `.dose_gamma` | `[nx ny nz]` | Gy (o Gy/source) | fotones |
 
 Se reconocen nombres alternativos (`xc`/`ejeX` → `gridX`, `boro` → `dose_B`, `fast` → `dose_H`,
 `thn`/`termico` → `dose_N`, `Dg`/`gamma` → `dose_gamma`). Los `NaN` (regiones de aire sin tally)
 se reemplazan por 0 Gy y se cuentan en `.nNaN`. También se completan `.origin`, `.spacing` y
 `.orientation`.
 
-> Si en el directorio solo hay `.out` crudos de PHITS, la función **no** los parsea: pide
-> convertirlos antes con los parsers del proyecto real (`f_lectura_phits_neutron.m`,
-> `f_lectura_phits_gamma.m`) y guardar `.mat`.
+> Los scripts `f_lectura_phits_neutron.m` y `f_lectura_phits_gamma.m` del directorio padre
+> siguen siendo la autoridad de semántica, pero son interactivos (`uigetfile`); para uso
+> automático usar los helpers vendidos de `src/` descritos en 6.3.1.
 
 ### 6.4 SDF del reactor (precómputo obligatorio para velocidad)
 

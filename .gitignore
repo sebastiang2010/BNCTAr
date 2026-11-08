@@ -4,4 +4,6 @@ graphify-out/
 ruvector.db
 
 # Dosimetria PHITS real (archivos de ~150/50 MB, no versionar)
-BNCT_PositionOptimizer/data/
+# (se excluye el contenido con * para poder versionar el README de la carpeta)
+BNCT_PositionOptimizer/data/*
+!BNCT_PositionOptimizer/data/README.md

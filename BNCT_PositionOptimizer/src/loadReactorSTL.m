@@ -87,6 +87,9 @@ end
 % ------------------------------------------------------------------------
 function outStruct = parseVTKascii(path)
 % Parser ASCII minimo para VTK legacy POLYDATA (POINTS + POLYGONS/CELLS).
+% Lee cada seccion acotado por el conteo declarado en su encabezado y
+% IGNORA cualquier otra seccion (LINES, VERTICES, POINT_DATA, FIELD...),
+% de modo que los datos nunca se contaminan entre secciones.
 fid = fopen(path, 'rt');
 if fid == -1
     error('BNCT:loadReactorSTL:noSePuedeAbrir', 'No se pudo abrir: %s', path);
@@ -100,84 +103,105 @@ if contains(texto, 'BINARY')
          'archivo a STL o a VTK ASCII (p.ej. con meshlab/paraview).'], path);
 end
 
-% --- puntos ---
-tok = regexp(texto, 'POINTS\s+(\d+)\s+(\w+)', 'tokens', 'once');
-if isempty(tok)
+lineas = regexp(texto, '\r?\n', 'split');
+nLin = numel(lineas);
+patronFloat = '[-+]?\d+\.?\d*(?:[eEdD][-+]?\d+)?';
+
+points = zeros(0, 3);
+faces  = zeros(0, 3);
+i = 0;
+while i < nLin
+    i = i + 1;
+    L = strtrim(lineas{i});
+    tok = regexp(L, '^([A-Za-z_]\w*)\s+(\d+)\s*(\w*)', 'tokens', 'once');
+    if isempty(tok)
+        continue;                          % linea de datos o comentario
+    end
+    switch upper(tok{1})
+        case 'POINTS'
+            nPuntos = str2double(tok{2});
+            [vals, i] = leerNumeros(lineas, i + 1, 3 * nPuntos, patronFloat);
+            if numel(vals) < 3 * nPuntos
+                error('BNCT:loadReactorSTL:vtkPuntosIncompletos', ...
+                    'POINTS declara %d puntos pero el archivo tiene menos numeros.', nPuntos);
+            end
+            points = reshape(vals(1:3*nPuntos), 3, nPuntos)';   % Nx3
+
+        case {'POLYGONS', 'CELLS'}
+            numCeldas = str2double(tok{2});
+            nDatos    = str2double(tok{3});
+            [vals, i] = leerNumeros(lineas, i + 1, nDatos, '\d+');
+            fcsTmp = zeros(2 * numCeldas, 3);  % max 2 triangulos por celda
+            nTr = 0;
+            k = 1;
+            while k <= numel(vals) && nTr < 2 * numCeldas
+                nv = vals(k);
+                if nv < 1 || k + nv > numel(vals)
+                    break;                     % datos truncos: descartar cola
+                end
+                idx = vals(k+1 : k+nv) + 1;    % VTK 0-based -> 1-based
+                if idx(end) > size(points, 1) || any(idx < 1)
+                    warning('BNCT:loadReactorSTL:indiceInvalido', ...
+                        'Celda con indices fuera de rango en "%s" (descartada).', path);
+                elseif nv == 3
+                    nTr = nTr + 1;
+                    fcsTmp(nTr, :) = idx(:).';
+                elseif nv == 4
+                    nTr = nTr + 1;
+                    fcsTmp(nTr, :) = idx(1:3);
+                    nTr = nTr + 1;
+                    fcsTmp(nTr, :) = idx([1 3 4]);    % quad -> 2 triangulos
+                else
+                    warning('BNCT:loadReactorSTL:celdaIgnorada', ...
+                        'Celda de %d vertices ignorada (solo 3 o 4).', nv);
+                end
+                k = k + nv + 1;
+            end
+            faces = fcsTmp(1:nTr, :);
+
+        otherwise
+            % Seccion no soportada (LINES, VERTICES, POINT_DATA, ...):
+            % se ignora por completo; su contenido se procesa cuando su
+            % propio encabezado aparezca (nunca, para las no soportadas).
+            continue;
+    end
+end
+
+if isempty(points)
     error('BNCT:loadReactorSTL:vtkSinPoints', ...
         'No se encontro la seccion POINTS en "%s".', path);
 end
-nPuntos = str2double(tok{1});
-% los 3*nPuntos numeros siguen al encabezado POINTS: los localizamos por
-% posicion (buscamos el indice del token "POINTS" en la lista cruda).
-posPOINT = strfind(texto, 'POINTS');
-cola = texto(posPOINT(1):end);
-todos = regexp(cola, '[-+]?\d+\.?\d*(?:[eE][-+]?\d+)?', 'match');
-% los primeros 2 tokens son "n" y "tipo"; luego 3*nPuntos numeros
-necesarios = 2 + 3*nPuntos;
-if numel(todos) < necesarios
-    error('BNCT:loadReactorSTL:vtkPuntosIncompletos', ...
-        'POINTS declara %d puntos pero el archivo tiene menos numeros.', nPuntos);
-end
-vals = str2double(todos(3:2+3*nPuntos));
-points = reshape(vals, 3, nPuntos)';      % Nx3
-
-% --- poligonos ---
-tok = regexp(texto, 'POLYGONS\s+(\d+)\s+(\d+)', 'tokens', 'once');
-if isempty(tok)
-    tok = regexp(texto, 'CELLS\s+(\d+)\s+(\d+)', 'tokens', 'once');
-end
-if isempty(tok)
-    error('BNCT:loadReactorSTL:vtkSinPoligonos', ...
-        ['No se encontro la seccion POLYGONS/CELLS en "%s". Si la malla ' ...
-         'contiene solo LINES/STRIPS no es usable como superficie.'], path);
-end
-posPOLY = strfind(texto, 'POLYGONS');
-if isempty(posPOLY); posPOLY = strfind(texto, 'CELLS'); end
-cola = texto(posPOLY(1):end);
-todos = regexp(cola, '\d+', 'match');
-necesarios = 2 + str2double(tok{2});
-if numel(todos) < necesarios
-    error('BNCT:loadReactorSTL:vtkPoligonosIncompletos', ...
-        'POLYGONS/CELLS declara mas datos de los presentes en el archivo.');
-end
-vals = str2double(todos(3:2+str2double(tok{2})));
-
-% recorrer celdas: primera cifra = nVertices de la celda
-numCeldas = str2double(tok{1});
-fcsTmp = zeros(2 * numCeldas, 3);   % preallocado: max 2 triangulos por celda
-nTr = 0;
-i = 1;
-while i <= numel(vals)
-    nv = vals(i);
-    if i + nv > numel(vals) + 1
-        break; % datos truncos: se descarta la celda incompleta
-    end
-    idx = vals(i+1 : i+nv) + 1;           % VTK es 0-based -> 1-based
-    if idx(end) > nPuntos || any(idx < 1)
-        warning('BNCT:loadReactorSTL:indiceInvalido', ...
-            'Celda con indices fuera de rango en "%s" (descartada).', path);
-    elseif nv == 3
-        nTr = nTr + 1;
-        fcsTmp(nTr, :) = idx(:).';
-    elseif nv == 4
-        nTr = nTr + 1;
-        fcsTmp(nTr, :) = idx(1:3);
-        nTr = nTr + 1;
-        fcsTmp(nTr, :) = idx([1 3 4]);    % quad -> 2 triangulos
-    else
-        warning('BNCT:loadReactorSTL:celdaIgnorada', ...
-            'Celda de %d vertices ignorada (solo 3 o 4).', nv);
-    end
-    i = i + nv + 1;
-end
-faces = fcsTmp(1:nTr, :);
-
 if isempty(faces)
     error('BNCT:loadReactorSTL:vtkSinTriangulos', ...
-        'No se extrajo ningun triangulo de "%s".', path);
+        ['No se extrajo ningun triangulo de "%s" (POLYGONS/CELLS ' ...
+         'ausente o sin celdas de 3-4 vertices).'], path);
 end
 outStruct = struct('points', points, 'faces', faces);
 validarMalla(outStruct);
+end
+
+% ------------------------------------------------------------------------
+function [vals, i] = leerNumeros(lineas, i0, cuantos, patron)
+% Acumula exactamente CUANTOS numeros leidos desde la linea i0. Se detiene
+% al completar el conteo o al encontrar la proxima linea-encabezado.
+vals = zeros(0, 1);
+i = i0 - 1;
+nLin = numel(lineas);
+while i < nLin && numel(vals) < cuantos
+    i = i + 1;
+    L = strtrim(lineas{i});
+    if isempty(L) || L(1) == '#'
+        continue;
+    end
+    % un encabezado de otra seccion corta la lectura
+    if ~isempty(regexp(L, '^[A-Za-z_]\w*\s+\d+', 'once')) && isempty(regexp(L, '^\d', 'once'))
+        i = i - 1;                         % devolver la linea para el bucle principal
+        break;
+    end
+    trozos = regexp(L, patron, 'match');
+    trozos = regexprep(trozos, '[dD]', 'E');   % exponente Fortran -> estandar
+    vals = [vals; str2double(trozos(:))]; %#ok<AGROW>
+end
 end
 
 % ------------------------------------------------------------------------

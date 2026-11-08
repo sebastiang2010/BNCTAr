@@ -1,56 +1,217 @@
-function doseData = loadPHITSDose(source)
+function doseData = loadPHITSDose(source, options)
 %LOADPHITSDOSE Carga las 4 matrices de dosis PHITS en el marco del haz.
-%   doseData = LOADPHITSDOSE(SOURCE) acepta:
-%     (a) ruta a un .mat que contiene un struct (o campos sueltos) con las
+%   doseData = LOADPHITSDOSE(SOURCE)
+%   doseData = LOADPHITSDOSE(SOURCE, OPTIONS)
+%
+%   SOURCE acepta:
+%     (0) struct con campos 'neutronFile' y/o 'photonFile' (rutas a .out
+%         crudos de PHITS)  ->  MODO REAL: parsea los archivos con los
+%         helpers vendidos del usuario:
+%           - neutronFile -> leerPHITSNeutron  (adaptado no-interactivo de
+%             f_lectura_phits_neutron.m): mset1 -> dose_B (Boron),
+%             mset2 -> dose_H (FastNeutron), mset3 -> dose_N (ThermalNeutron).
+%           - photonFile  -> leerPHITSGamma    (adaptado de
+%             f_lectura_phits_gamma.m): mset1 -> dose_gamma.
+%         neutronFile es obligatorio en modo real; si falta photonFile se
+%         completa dose_gamma con ceros y se avisa.
+%     (a) ruta a un .out crudo de PHITS (neutrones o fotones) -> modo real
+%         de un solo archivo (detecta 'part' del header); el resto de las
+%         componentes se completa con ceros y se avisa.
+%     (b) ruta a un .mat que contiene un struct (o campos sueltos) con las
 %         grillas y componentes (formato "doseData", ver abajo);
-%     (b) ruta a un DIRECTORIO con un .mat por componente (nombres que
-%         contengan boro/fast/termico/gamma y, opcionalmente, grid);
-%     (c) un struct ya armado en memoria (se normaliza y valida).
+%     (c) ruta a un DIRECTORIO: si contiene .mat por componente los usa
+%         (nombres que contengan boro/fast/termico/gamma y, opcionalmente,
+%         grid); si no hay .mat pero hay .out cuyo nombre contenga
+%         'neutron' y/o ('photon' o 'gamma'), los carga en modo real.
+%     (d) un struct ya armado en memoria (se normaliza y valida).
 %
 %   FORMATO doseData (CANONICO del proyecto, ver README):
 %     .gridX/.gridY/.gridZ : 1xn, mm, ejes NGRID (gridX <-> dimension 1)
-%     .dose_B     : [nx ny nz] Gy, dosis por boron   (PHITS: boro)
-%     .dose_H     : [nx ny nz] Gy, neutrones rapidos (PHITS: fast)
-%     .dose_N     : [nx ny nz] Gy, neutrones termicos (PHITS: thn)
-%     .dose_gamma : [nx ny nz] Gy, fotones           (PHITS: Dg / photon)
+%     .dose_B     : [nx ny nz] dosis por boron   (PHITS: mset 1 Boron)
+%     .dose_H     : [nx ny nz] neutrones rapidos (PHITS: mset 2 FastNeutron)
+%     .dose_N     : [nx ny nz] neutrones termicos(PHITS: mset 3 ThermalNeutron)
+%     .dose_gamma : [nx ny nz] fotones           (PHITS: archivo photon)
 %     .origin     : [1x3] mm (derivado de la grilla)
 %     .spacing    : [1x3] mm (si la grilla es uniforme; [] si no)
 %     .orientation: registro de convencion de ejes
+%     .doseScale  : factor de escalado DECIDIDO POR EL USUARIO (default 1).
+%                   El loader NO lo aplica a las matrices: los .out reales
+%                   traen Gy/source (por particula fuente) y la conversion
+%                   a dosis absoluta depende del numero de fuentes del
+%                   recalculo PHITS. Ver README seccion 6.
+%     .units      : 'Gy' (sintetico) o 'Gy/source' (real)
+%     .frame      : 'haz' -> las matrices quedan FIJAS en el marco del haz
+%                   (marco del tally PHITS con el cilindro; coincide con
+%                   el marco de destino de rigidTransform: con p=0 de
+%                   rigidTransform las coordenadas de paciente se leen
+%                   directamente en este marco).
+%     .sourceFiles: cell de archivos de origen (modo real)
+%     .meta       : struct(s) devueltos por los helpers (part, dims,
+%                   tiempos de parseo, etc.)
 %
-%   CONVENCIONES DE MARCO: las matrices quedan FIJAS en el MARCO DEL HAZ
-%   (estrategia Nivel A). El paciente se mapea al haz con T(p) de
-%   rigidTransform; la dosis se muestrea en D_k(T*r).
+%   OPTIONS (opcional):
+%     .doseScale : factor a registrar en doseData.doseScale (default 1).
+%     .verbose   : true/false, imprime resumen (default false).
+%
+%   CONVENCION DE EJES (ndgrid): las matrices son D(i,j,k) alineadas con
+%   gridX(i), gridY(j), gridZ(k), tal que interpn(gridX,gridY,gridZ,D,px,
+%   py,pz) interpola correctamente (ver sampleDoseMaps). Los helpers
+%   vendidos del usuario ya entregan las paginas en ese orden (x-rapido,
+%   y volteada a ascendente segun el header PHITS "y = ny,1,-1"; ver
+%   comentarios de leerPHITSNeutron.m / leerPHITSGamma.m).
 %
 %   INTEGRACION con los parsers del usuario (en el directorio padre):
-%     - f_lectura_phits_neutron.m devuelve D1c con .boro/.fast/.thn y
-%       .xc/.yc/.zc  ->  mapeo automatico a dose_B/dose_H/dose_N/gridX...
-%     - f_lectura_phits_gamma.m devuelve D1c con .Dg  ->  dose_gamma.
-%     - lecturaDosis.m (MCNP) devuelve ejeX/ejeY/ejeZ + Matrix 4D con
-%       .type: se reconocen los ejes; las componentes deben extraerse a
-%       campos con nombres arriba antes de llamar esta funcion.
-%     Si SOURCE contiene archivos .out crudos de PHITS se emite un error
-%     claro pidiendo convertirlos primero con los parsers del usuario.
+%     - f_lectura_phits_neutron.m / f_lectura_phits_gamma.m son scripts
+%       interactivos (uigetfile); su logica esta vendida en
+%       src/leerPHITSNeutron.m y src/leerPHITSGamma.m para uso automatico.
+%     - Si SOURCE contiene archivos .out sin nombre reconocible en modo
+%       directorio, se emite un error claro.
 %
 %   Los NaN de los mapas (regiones de aire sin tally) se reemplazan por
 %   0 Gy y se cuenta cuantos fueron (campo .nNaN).
 
+if nargin < 2
+    options = struct();
+end
+if ~isstruct(options)
+    error('BNCT:loadPHITSDose:opcionesInvalidas', 'OPTIONS debe ser un struct.');
+end
+
+% ---------------------------- struct en memoria ----------------------------
 if isstruct(source) && ~isstring(source) && ~ischar(source)
-    doseData = normalizar(source);
+    if isfield(source, 'neutronFile') || isfield(source, 'photonFile')
+        doseData = cargarPHITSReal(source, options);   % modo real (0)
+    else
+        doseData = normalizar(source);                 % modo sintetico (d)
+    end
     return
 end
+
+% ------------------------------ rutas --------------------------------------
 if ~(ischar(source) || isstring(source))
     error('BNCT:loadPHITSDose:sourceInvalido', ...
-        'SOURCE debe ser ruta (.mat o directorio) o struct ya armado.');
+        'SOURCE debe ser ruta (.out/.mat o directorio) o struct ya armado.');
 end
 source = char(source);
 
-if exist(source, 'dir') == 7
-    doseData = cargarDirectorio(source);
-elseif exist(source, 'file') == 2
-    doseData = cargarMat(source);
+if exist(source, 'file') == 2
+    [~,~,ext] = fileparts(source);
+    if strcmpi(ext, '.out')
+        doseData = cargarPHITSReal(archivarSpec(source), options);  % (a)
+    else
+        doseData = cargarMat(source);                               % (b)
+    end
+elseif exist(source, 'dir') == 7
+    doseData = cargarDirectorio(source, options);                   % (c)
 else
     error('BNCT:loadPHITSDose:noExiste', 'Ruta inexistente: %s', source);
 end
+end
+
+% ========================================================================
+function spec = archivarSpec(rutaOut)
+% Envolvemos una ruta .out suelta en el spec del modo real.
+nombre = lower(fullfile(rutaOut));
+if contains(nombre, 'neutron')
+    spec = struct('neutronFile', rutaOut);
+elseif contains(nombre, 'photon') || contains(nombre, 'gamma')
+    spec = struct('photonFile', rutaOut);
+else
+    error('BNCT:loadPHITSDose:outSinIdentificar', ...
+        ['El archivo "%s" no dice "neutron" ni "photon/gamma" en el nombre. ' ...
+         'Use un struct {neutronFile, photonFile} para identificarlo.'], rutaOut);
+end
+end
+
+% ========================================================================
+function doseData = cargarPHITSReal(spec, options)
+% MODO REAL: parsea los .out crudos con los helpers vendidos del usuario
+% (leerPHITSNeutron / leerPHITSGamma) y arma el struct canonico.
+if ~isfield(spec, 'neutronFile')
+    error('BNCT:loadPHITSDose:faltaNeutron', ...
+        ['El modo real requiere spec.neutronFile (el archivo de neutrones ' ...
+         'aporta las 3 componentes B/H/N).']);
+end
+archivoN = char(spec.neutronFile);
+if exist(archivoN, 'file') ~= 2
+    error('BNCT:loadPHITSDose:noExiste', 'No existe el archivo de neutrones: %s', archivoN);
+end
+
+fprintf('loadPHITSDose (modo real): parseando %s ...\n', archivoN);
+[Dn, metaN] = leerPHITSNeutron(archivoN);
+fprintf('  neutrones OK: %dx%dx%d, %.1f s (msets 1=Boron, 2=FastNeutron, 3=ThermalNeutron)\n', ...
+    size(Dn.boro), metaN.tiempoParseo);
+
+% grilla en mm (los helpers conservan la convencion cm del usuario)
+gridX = double(Dn.xc(:)).' * 10;
+gridY = double(Dn.yc(:)).' * 10;
+gridZ = double(Dn.zc(:)).' * 10;
+
+S = struct('gridX', gridX, 'gridY', gridY, 'gridZ', gridZ, ...
+    'dose_B', double(Dn.boro), 'dose_H', double(Dn.fast), 'dose_N', double(Dn.thn));
+
+archivos = {archivoN};
+metas = {metaN};
+
+% --- fotones (opcional) ---
+if isfield(spec, 'photonFile') && ~isempty(spec.photonFile)
+    archivoG = char(spec.photonFile);
+    if exist(archivoG, 'file') ~= 2
+        error('BNCT:loadPHITSDose:noExiste', 'No existe el archivo de fotones: %s', archivoG);
+    end
+    fprintf('loadPHITSDose (modo real): parseando %s ...\n', archivoG);
+    [Dg, metaG] = leerPHITSGamma(archivoG);
+    fprintf('  fotones OK: %dx%dx%d, %.1f s\n', size(Dg.Dg), metaG.tiempoParseo);
+
+    % la grilla del photon debe coincidir con la de neutrones
+    if ~isequal(size(Dg.Dg), size(Dn.boro)) || ...
+            ~grillasIguales(Dg.xc, Dn.xc) || ~grillasIguales(Dg.yc, Dn.yc) || ...
+            ~grillasIguales(Dg.zc, Dn.zc)
+        error('BNCT:loadPHITSDose:grillasDiscrepan', ...
+            ['La grilla del archivo de fotones (%dx%d en x/y, zdel=%g) no ' ...
+             'coincide con la de neutrones (%dx%d en x/y, zdel=%g). Verificar ' ...
+             'que ambos tallies usen la misma mesh xyz.'], ...
+            numel(Dg.xc), numel(Dg.yc), metaG.xdel, numel(Dn.xc), numel(Dn.yc), metaN.xdel);
+    end
+    S.dose_gamma = double(Dg.Dg);
+    archivos{end+1} = archivoG; %#ok<AGROW>
+    metas{end+1} = metaG; %#ok<AGROW>
+else
+    warning('BNCT:loadPHITSDose:sinPhoton', ...
+        ['No se indico photonFile: dose_gamma se completa con 0 ' ...
+         '(el calculo de dosis total quedara sin componente gamma).']);
+    S.dose_gamma = zeros(size(Dn.boro));
+end
+
+% --- campos opcionales del modo real ---
+S.doseScale   = obtenerCampo(options, 'doseScale', 1);
+S.units       = 'Gy/source';
+S.frame       = 'haz';
+S.sourceFiles = archivos;
+S.meta        = metas;
+
+doseData = normalizar(S);
+
+if obtenerCampo(options, 'verbose', false)
+    fprintf(['  grilla (mm): X [%.2f, %.2f] step %.2f | Y [%.2f, %.2f] step %.2f | ' ...
+        'Z [%.2f, %.2f] step %.2f\n'], ...
+        doseData.gridX(1), doseData.gridX(end), doseData.spacing(1), ...
+        doseData.gridY(1), doseData.gridY(end), doseData.spacing(2), ...
+        doseData.gridZ(1), doseData.gridZ(end), doseData.spacing(3));
+    fprintf('  max por componente [B H N gamma] (Gy/source): %s\n', ...
+        mat2str([max(doseData.dose_B(:)), max(doseData.dose_H(:)), ...
+                 max(doseData.dose_N(:)), max(doseData.dose_gamma(:))], 4));
+end
+end
+
+% ========================================================================
+function iguales = grillasIguales(a, b)
+a = double(a(:)); b = double(b(:));
+if numel(a) ~= numel(b)
+    iguales = false; return
+end
+tol = 1e-6 * max(1, max(abs(a)));
+iguales = all(abs(a - b) <= tol);
 end
 
 % ========================================================================
@@ -68,20 +229,32 @@ doseData = normalizar(S);
 end
 
 % ========================================================================
-function doseData = cargarDirectorio(dirPath)
+function doseData = cargarDirectorio(dirPath, options)
+% Modo directorio: prioriza .mat por componente; si no hay, intenta modo
+% real con los .out de neutrones/fotones presentes.
 archivos = dir(fullfile(dirPath, '*.mat'));
 if isempty(archivos)
-    outCrudos = dir(fullfile(dirPath, '*.out'));
-    if ~isempty(outCrudos)
-        error('BNCT:loadPHITSDose:outCrudo', ...
-            ['Se encontraron archivos .out de PHITS en "%s". Convierta ' ...
-             'primero cada uno con los parsers del proyecto real ' ...
-             '(f_lectura_phits_neutron.m para boro/fast/termico y ' ...
-             'f_lectura_phits_gamma.m para fotones) y guarde .mat, o ' ...
-             'arme el struct doseData a mano.'], dirPath);
+    outNeutron = dir(fullfile(dirPath, '*neutron*.out'));
+    outPhoton  = [dir(fullfile(dirPath, '*photon*.out')); dir(fullfile(dirPath, '*gamma*.out'))];
+    if ~isempty(outNeutron) || ~isempty(outPhoton)
+        % modo real automatico con los .out presentes
+        spec = struct();
+        if ~isempty(outNeutron)
+            spec.neutronFile = fullfile(dirPath, outNeutron(1).name);
+        end
+        if ~isempty(outPhoton)
+            spec.photonFile = fullfile(dirPath, outPhoton(1).name);
+        end
+        if ~isfield(spec, 'neutronFile')
+            warning('BNCT:loadPHITSDose:soloPhoton', ...
+                ['El directorio "%s" solo tiene .out de fotones: dose_B/H/N ' ...
+                 'quedaran en 0.'], dirPath);
+        end
+        doseData = cargarPHITSReal(spec, options);
+        return
     end
     error('BNCT:loadPHITSDose:directorioSinMat', ...
-        'No hay archivos .mat de dosis en "%s".', dirPath);
+        'No hay archivos .mat ni .out reconocibles (neutron/photon) en "%s".', dirPath);
 end
 
 S = struct();
@@ -156,6 +329,30 @@ difs = [diffUniforme(salida.gridX), diffUniforme(salida.gridY), diffUniforme(sal
 salida.spacing     = difs;
 salida.orientation = 'ndgrid-XYZ (dim1=x, dim2=y, dim3=z); marco del haz';
 salida.nNaN        = nNaN;
+
+% --- campos descriptivos (modo real y defaults para el sintetico) ---
+salida.doseScale   = obtenerCampo(S, 'doseScale', 1);
+if isfield(S, 'units') && ~isempty(S.units)
+    salida.units = char(S.units);
+else
+    salida.units = 'Gy';
+end
+if isfield(S, 'frame') && ~isempty(S.frame)
+    salida.frame = char(S.frame);
+else
+    salida.frame = 'haz';
+end
+if isfield(S, 'sourceFiles')
+    salida.sourceFiles = S.sourceFiles;
+else
+    salida.sourceFiles = {};
+end
+if isfield(S, 'meta')
+    salida.meta = S.meta;
+else
+    salida.meta = {};
+end
+
 doseData = salida;
 end
 
@@ -198,4 +395,12 @@ if max(abs(dv - dv(1))) > 1e-6 * max(1, abs(dv(1)))
         'La grilla no es uniforme; spacing guarda solo el primer paso.');
 end
 d = dv(1);
+end
+
+function valor = obtenerCampo(S, campo, def)
+if isfield(S, campo) && ~isempty(S.(campo))
+    valor = S.(campo);
+else
+    valor = def;
+end
 end
