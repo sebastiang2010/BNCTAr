@@ -8,6 +8,7 @@ import vtk, qt, ctk, slicer
 from slicer.ScriptedLoadableModule import *
 import numpy as np
 import re
+import sys
 import unicodedata
 
 #
@@ -62,6 +63,21 @@ _PREFIX_INDIVIDUAL = "Mascara_"
 _NAME_COMBINED = "Mascaras_Combinadas"
 _NAME_COMBINED_GRAY = "Mascaras_Combinadas_Gris"
 _NAME_MASKS_FOLDER = "Mascaras_Organos"
+
+# ------------------------------------------------------------------
+# Motor radiobiologico UTCP (capa pura, sin Qt/slicer; testeable)
+# ------------------------------------------------------------------
+if _MODULE_DIR not in sys.path:
+    sys.path.insert(0, _MODULE_DIR)
+try:
+    from utcp_models import (builtin_ntcp_models, builtin_tcp_models,
+                             default_isoe_model_for_roi)
+    from utcp_engine import compute_utcp_point
+    from utcp_time_optimizer import sweep_utcp
+    _UTCP_IMPORT_ERROR = None
+except Exception as _e:  # pragma: no cover - dentro de Slicer
+    _UTCP_IMPORT_ERROR = str(e)
+    logging.warning("Motor UTCP no disponible: %s" % _e)
 
 
 def load_jsonc(path):
@@ -810,6 +826,7 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
             self.dvhModeloCombo.addItem(f"{m['id']}. {m['name']}")
 
         self._dvh_config = self._loadConfigForDvh()
+        self._setupUTCPUI()
 
     # ------------------------------------------------------------------
     # UI: Mascaras (labelmaps por ROI)
@@ -1148,6 +1165,19 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
         self.configTable.blockSignals(False)
 
     def _readConfigFromTable(self):
+        # Conserva claves extra de la config persistida ('universo', 'tir',
+        # 'utcp_*'): la tabla solo edita 10 columnas y reconstruir las filas
+        # sin merge BORRARIA esas claves del jsonc en cada edicion de celda.
+        prev = {}
+        try:
+            if os.path.exists(_ORGAN_CONFIG_PATH):
+                for r in load_jsonc(_ORGAN_CONFIG_PATH).get('rois', []):
+                    if isinstance(r, dict) and r.get('name'):
+                        prev[r['name']] = r
+        except Exception:
+            pass
+        extra_keys = ('universo', 'tir', 'utcp_isoe_model',
+                      'utcp_ntcp_model', 'utcp_include')
         config = []
         for i in range(self.configTable.rowCount):
             def val(col):
@@ -1165,17 +1195,27 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
                 'tumor': self.configTable.item(i, 8).checkState() == qt.Qt.Checked if self.configTable.item(i, 8) else False,
                 'gray_level': int(float(val(9))) if val(9) else 0,
             }
+            for k in extra_keys:
+                if k in prev.get(row['name'], {}) and k not in row:
+                    row[k] = prev[row['name']][k]
             config.append(row)
         return config
 
     def _syncOrganConfigJson(self):
         config = self._readConfigFromTable()
         try:
+            data = {}
+            if os.path.exists(_ORGAN_CONFIG_PATH):
+                try:
+                    data = load_jsonc(_ORGAN_CONFIG_PATH)
+                except Exception:
+                    data = {}
+            data['rois'] = config
             d = os.path.dirname(_ORGAN_CONFIG_PATH)
             if not os.path.exists(d):
                 os.makedirs(d)
             with open(_ORGAN_CONFIG_PATH, 'w', encoding='utf-8') as f:
-                json.dump({'rois': config}, f, indent=2, ensure_ascii=False)
+                json.dump(data, f, indent=2, ensure_ascii=False)
         except Exception as e:
             logging.warning(f"No se pudo sincronizar organ_config.jsonc: {e}")
 
@@ -1665,6 +1705,397 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
             _log(f"ERROR: {e}\n{traceback.format_exc()}")
         finally:
             qt.QApplication.restoreOverrideCursor()
+
+    # ------------------------------------------------------------------
+    # UTCP: TCP / NTCP / UTCP multi-organo (pestaña DVH Analysis)
+    # ------------------------------------------------------------------
+    def _loadModelsAll(self):
+        if os.path.exists(_MODELS_PATH):
+            try:
+                return load_jsonc(_MODELS_PATH)
+            except Exception as e:
+                logging.warning(f"No se pudo cargar models.jsonc: {e}")
+        return {}
+
+    def _utcpNtcpCatalog(self):
+        """Catalogo NTCP: builtin (mucosa/brain/configurable/riback)."""
+        try:
+            return builtin_ntcp_models()
+        except Exception as e:
+            logging.warning(f"Catalogo NTCP fallback: {e}")
+            return []
+
+    def _setupUTCPUI(self):
+        if _UTCP_IMPORT_ERROR:
+            lbl = qt.QLabel(f"UTCP no disponible: {_UTCP_IMPORT_ERROR}")
+            self.dvhLayout.addWidget(lbl)
+            return
+        self._utcp_models_all = self._loadModelsAll()
+        self.dvhLayout.addWidget(qt.QLabel("UTCP — TCP / NTCP / UTCP multi-órgano (Gy IsoE):"))
+        self.utcpTable = qt.QTableWidget(0, 5)
+        self.utcpTable.setHorizontalHeaderLabels(
+            ["ROI", "Tipo", "Modelo IsoE", "Modelo NTCP", "Incluir UTCP"])
+        try:
+            self.utcpTable.horizontalHeader().setSectionResizeMode(qt.QHeaderView.Stretch)
+        except Exception:
+            pass
+        self.utcpTable.setMinimumHeight(180)
+        self.dvhLayout.addWidget(self.utcpTable)
+        rowBtns = qt.QHBoxLayout()
+        self.utcpCalcBtn = qt.QPushButton("Calcular UTCP")
+        self.utcpOptBtn = qt.QPushButton("Optimizar tiempo (barrido)")
+        rowBtns.addWidget(self.utcpCalcBtn)
+        rowBtns.addWidget(self.utcpOptBtn)
+        self.dvhLayout.addLayout(rowBtns)
+        self.utcpCalcBtn.connect('clicked(bool)', self.onUTCPCompute)
+        self.utcpOptBtn.connect('clicked(bool)', self.onUTCPOptimize)
+        self._utcpPopulateTable()
+
+    def _utcpPopulateTable(self):
+        config = self._dvh_config or []
+        iso_models = self._utcp_models_all.get('isoeffective', [])
+        ntcp_models = self._utcpNtcpCatalog()
+        self.utcpTable.blockSignals(True)
+        self.utcpTable.setRowCount(len(config))
+        for i, row in enumerate(config):
+            is_tumor = bool(row.get('tumor'))
+            name_item = qt.QTableWidgetItem(str(row.get('name', '')))
+            name_item.setFlags(name_item.flags() & ~qt.Qt.ItemIsEditable)
+            self.utcpTable.setItem(i, 0, name_item)
+            tipo = "Tumor (TCP Provenzano)" if is_tumor else "OAR"
+            tipo_item = qt.QTableWidgetItem(tipo)
+            tipo_item.setFlags(tipo_item.flags() & ~qt.Qt.ItemIsEditable)
+            self.utcpTable.setItem(i, 1, tipo_item)
+            # Modelo IsoE (por tejido)
+            combo_iso = qt.QComboBox()
+            for m in iso_models:
+                combo_iso.addItem(f"{m['id']}. {m['name']}")
+            default_iso = default_isoe_model_for_roi(
+                str(row.get('name', '')), is_tumor,
+                [m['name'] for m in iso_models])
+            for j, m in enumerate(iso_models):
+                if m['name'] == default_iso:
+                    combo_iso.setCurrentIndex(j)
+                    break
+            self.utcpTable.setCellWidget(i, 2, combo_iso)
+            # Modelo NTCP (solo OAR)
+            if is_tumor:
+                ntcp_item = qt.QTableWidgetItem("— (TCP)")
+                ntcp_item.setFlags(ntcp_item.flags() & ~qt.Qt.ItemIsEditable)
+                self.utcpTable.setItem(i, 3, ntcp_item)
+                inc = qt.QTableWidgetItem()
+                inc.setFlags(inc.flags() & ~qt.Qt.ItemIsUserCheckable
+                             & ~qt.Qt.ItemIsEnabled)
+                self.utcpTable.setItem(i, 4, inc)
+            else:
+                combo_ntcp = qt.QComboBox()
+                for nm in ntcp_models:
+                    if nm.get('kind') == 'riback':
+                        tag = " (no disponible)"
+                    elif nm.get('provisional_para'):
+                        tag = " (PROVISIONAL fuera de su endpoint)"
+                    else:
+                        tag = ""
+                    combo_ntcp.addItem(nm.get('name', 'LKB') + tag)
+                combo_ntcp.insertItem(0, "(excluir de NTCP)")
+                saved = row.get('utcp_ntcp_model')
+                if saved:
+                    for j, nm in enumerate(ntcp_models):
+                        if nm.get('name') == saved:
+                            combo_ntcp.setCurrentIndex(j + 1)
+                            break
+                self.utcpTable.setCellWidget(i, 3, combo_ntcp)
+                inc = qt.QTableWidgetItem("Incluir")
+                inc.setFlags(inc.flags() | qt.Qt.ItemIsUserCheckable)
+                inc.setCheckState(
+                    qt.Qt.Checked if row.get('utcp_include') else qt.Qt.Unchecked)
+                self.utcpTable.setItem(i, 4, inc)
+        self.utcpTable.blockSignals(False)
+
+    def _utcpResolveTumor(self, config):
+        """Resuelve la ROI tumoral por flag (nunca por indice)."""
+        tumors = [r for r in config if r.get('tumor')]
+        if not tumors:
+            slicer.util.errorDisplay(
+                "No hay ROI marcada como tumor en Dosimetry (columna Tumor). "
+                "Marque exactamente una ROI tumoral para calcular TCP/UTCP.")
+            return None
+        if len(tumors) > 1:
+            names = [r.get('name', '?') for r in tumors]
+            sel, ok = qt.QInputDialog.getItem(
+                slicer.util.mainWindow(),
+                "Multiple ROI tumorales",
+                "Hay %d ROIs marcadas como tumor (%s). Seleccione la tumoral "
+                "para TCP:" % (len(tumors), ", ".join(names)),
+                names, 0, False)
+            if not ok:
+                return None
+            return next(r for r in tumors if r.get('name') == sel)
+        return tumors[0]
+
+    def _utcpPersistSelection(self):
+        """Guarda utcp_isoe_model / utcp_ntcp_model / utcp_include en jsonc."""
+        try:
+            data = {}
+            if os.path.exists(_ORGAN_CONFIG_PATH):
+                data = load_jsonc(_ORGAN_CONFIG_PATH)
+            rois = data.get('rois', [])
+            by_name = {r.get('name'): r for r in rois}
+            for i in range(self.utcpTable.rowCount()):
+                item = self.utcpTable.item(i, 0)
+                if item is None:
+                    continue
+                name = item.text()
+                r = by_name.get(name)
+                if r is None:
+                    continue
+                combo_iso = self.utcpTable.cellWidget(i, 2)
+                iso_models = self._utcp_models_all.get('isoeffective', [])
+                if combo_iso is not None and 0 <= combo_iso.currentIndex < len(iso_models):
+                    r['utcp_isoe_model'] = iso_models[combo_iso.currentIndex]['name']
+                combo_ntcp = self.utcpTable.cellWidget(i, 3)
+                if combo_ntcp is not None:
+                    ntcp_models = self._utcpNtcpCatalog()
+                    idx = combo_ntcp.currentIndex - 1
+                    r['utcp_ntcp_model'] = (ntcp_models[idx].get('name')
+                                            if 0 <= idx < len(ntcp_models) else None)
+                inc = self.utcpTable.item(i, 4)
+                if inc is not None and (inc.flags() & qt.Qt.ItemIsUserCheckable):
+                    r['utcp_include'] = (inc.checkState() == qt.Qt.Checked)
+            d = os.path.dirname(_ORGAN_CONFIG_PATH)
+            if not os.path.exists(d):
+                os.makedirs(d)
+            with open(_ORGAN_CONFIG_PATH, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            logging.warning(f"No se pudo persistir seleccion UTCP: {e}")
+
+    def _utcpIsoParams14(self, model_name):
+        for m in self._utcp_models_all.get('isoeffective', []):
+            if m['name'] == model_name:
+                return [m['alpha_r'], m['beta_r'], m['alpha_boro'], m['beta_boro'],
+                        m['alpha_thn'], m['beta_thn'], m['alpha_fast'],
+                        m['beta_fast'], m['tof'], m['tos'], m['pf_g'],
+                        m['ps_g'], m['pf_bnct'], m['ps_bnct']]
+        raise ValueError("Modelo isoefectivo no encontrado: %r" % model_name)
+
+    def _utcpCollectComps(self, meshes, mask_node):
+        """Arma {nmesh: comps} con los tally crudos de cada mesh (suma _C2)."""
+        logic = BNCTLogic()
+        ref_shape = np.array(slicer.util.arrayFromVolume(mask_node)).shape
+        comps_map = {}
+        for nmesh in sorted(meshes):
+            volumes = logic._getKermaVolumesForMesh(int(nmesh))
+            if not volumes:
+                raise ValueError(
+                    "No hay componentes KERMA para mesh %d. Calcule la "
+                    "dosimetria (pestaña Dosimetry) antes de correr UTCP." % nmesh)
+            comps = {'boro': None, 'thn': None, 'fast': None, 'gamma': None}
+            for node, vol_name in volumes:
+                arr = slicer.util.arrayFromVolume(node).astype(np.float64)
+                if arr.shape != ref_shape:
+                    from scipy.ndimage import zoom
+                    factors = [r / a for r, a in zip(ref_shape, arr.shape)]
+                    arr = zoom(arr, factors, order=1)
+                if 'Boron' in vol_name or 'boro' in vol_name.lower():
+                    comps['boro'] = arr if comps['boro'] is None else comps['boro'] + arr
+                elif 'Thermal' in vol_name or 'thn' in vol_name.lower():
+                    comps['thn'] = arr if comps['thn'] is None else comps['thn'] + arr
+                elif 'Fast' in vol_name:
+                    comps['fast'] = arr if comps['fast'] is None else comps['fast'] + arr
+                elif 'Gamma' in vol_name or 'photon' in vol_name.lower():
+                    comps['gamma'] = arr if comps['gamma'] is None else comps['gamma'] + arr
+            missing = [k for k, v in comps.items() if v is None]
+            if missing:
+                raise ValueError("Mesh %d sin componentes: %s. No se sustituyen "
+                                 "por otras distribuciones." % (nmesh, ", ".join(missing)))
+            comps_map[int(nmesh)] = comps
+        return comps_map
+
+    def _utcpBuildInputs(self):
+        """Prepara tumor/oars/comps_map/vol por voxel desde la UI."""
+        self._utcpPersistSelection()
+        config = self._dvh_config or []
+        tumor_row = self._utcpResolveTumor(config)
+        if tumor_row is None:
+            return None
+        mask_node = self.maskVolumeSelector.currentNode()
+        if not mask_node:
+            slicer.util.errorDisplay("Seleccione un volumen de mascara (Mascaras_Combinadas_Gris).")
+            return None
+        spacing = mask_node.GetSpacing()
+        voxel_cc = float(spacing[0]) * float(spacing[1]) * float(spacing[2]) / 1000.0
+        mask_arr = np.array(slicer.util.arrayFromVolume(mask_node))
+        iso_models = self._utcp_models_all.get('isoeffective', [])
+        ntcp_models = self._utcpNtcpCatalog()
+
+        def vol_of(row):
+            m = (mask_arr == int(row.get('gray_level', 0)))
+            return float(m.sum()) * voxel_cc, m
+
+        vol_t, mask_t = vol_of(tumor_row)
+        if vol_t <= 0:
+            slicer.util.errorDisplay(
+                "La mascara tumoral '%s' esta vacia (gray_level %s)."
+                % (tumor_row.get('name'), tumor_row.get('gray_level')))
+            return None
+        iso_name = tumor_row.get('utcp_isoe_model') or \
+            default_isoe_model_for_roi(str(tumor_row.get('name', '')), True,
+                                       [m['name'] for m in iso_models])
+        tumor = {
+            'name': tumor_row.get('name', 'TUMOR'), 'mesh': int(tumor_row.get('nmesh', 1) or 1),
+            'mask': mask_t, 'volume_cc': vol_t,
+            'bratio': float(tumor_row.get('ratio', 1.0) or 1.0),
+            'isoe_params14': self._utcpIsoParams14(iso_name),
+            'tcp_params': (builtin_tcp_models(
+                self._utcp_models_all.get('tcp', [])) or [None])[0],
+        }
+        oars = []
+        for i in range(self.utcpTable.rowCount()):
+            item = self.utcpTable.item(i, 0)
+            if item is None:
+                continue
+            row = next((r for r in config if r.get('name') == item.text()), None)
+            if row is None or row.get('tumor'):
+                continue
+            inc = self.utcpTable.item(i, 4)
+            include = bool(inc and (inc.flags() & qt.Qt.ItemIsUserCheckable)
+                           and inc.checkState() == qt.Qt.Checked)
+            if not include:
+                continue
+            combo_ntcp = self.utcpTable.cellWidget(i, 3)
+            idx = combo_ntcp.currentIndex - 1 if combo_ntcp is not None else -1
+            if idx < 0 or idx >= len(ntcp_models):
+                continue
+            nm = dict(ntcp_models[idx])
+            vol_o, mask_o = vol_of(row)
+            iso_name = row.get('utcp_isoe_model') or \
+                default_isoe_model_for_roi(str(row.get('name', '')), False,
+                                           [m['name'] for m in iso_models])
+            oars.append({
+                'name': row.get('name', '?'), 'mesh': int(row.get('nmesh', 1) or 1),
+                'mask': mask_o, 'volume_cc': vol_o,
+                'bratio': float(row.get('ratio', 1.0) or 1.0),
+                'isoe_params14': self._utcpIsoParams14(iso_name),
+                'ntcp_params': nm, 'include': True,
+                'provisional': bool(nm.get('provisional') or nm.get('provisional_para')),
+            })
+        if not oars:
+            slicer.util.messageBox(
+                "No hay OARs incluidos en el producto UTCP: UTCP = TCP.",
+                "UTCP")
+        b10 = self.dvhB10Spin.value
+        tir = self.dvhTirSpin.value
+        meshes = {tumor['mesh']} | {o['mesh'] for o in oars}
+        try:
+            comps_map = self._utcpCollectComps(meshes, mask_node)
+        except ValueError as e:
+            slicer.util.errorDisplay(str(e))
+            return None
+        return {'tumor': tumor, 'oars': oars, 'comps_map': comps_map,
+                'b10': float(b10), 'tir': float(tir)}
+
+    def onUTCPCompute(self):
+        if _UTCP_IMPORT_ERROR:
+            slicer.util.errorDisplay("Motor UTCP no disponible: %s" % _UTCP_IMPORT_ERROR)
+            return
+        inputs = self._utcpBuildInputs()
+        if inputs is None:
+            return
+        try:
+            qt.QApplication.setOverrideCursor(qt.Qt.WaitCursor)
+            res = compute_utcp_point(inputs['comps_map'], inputs['tumor'],
+                                     inputs['oars'], inputs['tir'], inputs['b10'])
+        except Exception as e:
+            slicer.util.errorDisplay(f"Error en UTCP: {str(e)}")
+            import traceback
+            logging.error(traceback.format_exc())
+            return
+        finally:
+            qt.QApplication.restoreOverrideCursor()
+        lines = [f"t = {res['tir']:.2f} min,  B-10 = {inputs['b10']:.1f} ppm",
+                 f"TCP  = {res['tcp']:.4f}",
+                 f"UTCP = {res['utcp']:.4f}",
+                 f"({res['assumption']})", ""]
+        for name, info in res['ntcp'].items():
+            if info.get('ntcp') is None:
+                lines.append(f"NTCP {name}: excluido ({info.get('error', 'no incluido')})")
+            else:
+                lines.append(f"NTCP {name} [{info.get('model', 'LKB')}] = "
+                             f"{info['ntcp']:.4f}  (Dref = {info.get('dref_gy', float('nan')):.2f} Gy IsoE)")
+        for w in res['warnings']:
+            lines.append(f"[AVISO] {w}")
+        slicer.util.messageBox("\n".join(lines), "Resultado UTCP")
+
+    def onUTCPOptimize(self):
+        if _UTCP_IMPORT_ERROR:
+            slicer.util.errorDisplay("Motor UTCP no disponible: %s" % _UTCP_IMPORT_ERROR)
+            return
+        inputs = self._utcpBuildInputs()
+        if inputs is None:
+            return
+        t_max = max(inputs['tir'], 1.0)
+        tvals = np.linspace(1.0, t_max, 40)
+        try:
+            qt.QApplication.setOverrideCursor(qt.Qt.WaitCursor)
+            res = sweep_utcp(inputs['comps_map'], tvals[0], inputs['tumor'],
+                             inputs['oars'], tvals, inputs['b10'])
+        except Exception as e:
+            slicer.util.errorDisplay(f"Error en barrido UTCP: {str(e)}")
+            import traceback
+            logging.error(traceback.format_exc())
+            return
+        finally:
+            qt.QApplication.restoreOverrideCursor()
+        # Tabla + grafico
+        try:
+            self._utcpPlotSweep(res, inputs)
+        except Exception as e:
+            logging.warning(f"No se pudo graficar barrido UTCP: {e}")
+        feasible = (f"\nMaximo factible con restricciones: t = {res['t_feasible']:.2f} min, "
+                    f"UTCP = {res['utcp_feasible_max']:.4f}"
+                    if res['t_feasible'] is not None else
+                    "\n(Sin restricciones dosimetricas configuradas)")
+        slicer.util.messageBox(
+            f"Tiempo optimo (sin restricciones): t = {res['t_opt']:.2f} min\n"
+            f"UTCP maximo = {res['utcp_max']:.4f}\n"
+            f"TCP en t_opt = {res['tcp'][int(np.nanargmax(res['utcp']))]:.4f}"
+            f"{feasible}\n\nCurvas guardadas en tabla/grafico 'UTCP'.",
+            "Optimizacion de tiempo de irradiacion")
+
+    def _utcpPlotSweep(self, res, inputs):
+        table = slicer.mrmlScene.GetFirstNodeByName("Table_UTCP")
+        if table is None:
+            table = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLTableNode", "Table_UTCP")
+        table.RemoveAllColumns()
+        def col(name, values):
+            c = table.AddColumn()
+            c.SetName(name)
+            c.SetValues([float(v) for v in values])
+        col("tir_min", res['tir_values'])
+        col("TCP", res['tcp'])
+        col("UTCP", res['utcp'])
+        for name, curve in res['ntcp'].items():
+            col(f"NTCP_{name}", curve)
+        plot = slicer.mrmlScene.GetFirstNodeByName("Chart_UTCP")
+        if plot is None:
+            plot = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotChartNode", "Chart_UTCP")
+        # limpiar series previas del chart
+        sn = slicer.mrmlScene.GetNodesByClass("vtkMRMLPlotSeriesNode")
+        for i in range(sn.GetNumberOfItems()):
+            s = sn.GetItemAsIndex(i)
+            if s.GetChartNodeID() == plot.GetID():
+                slicer.mrmlScene.RemoveNode(s)
+        for cname, title in (("TCP", "TCP"), ("UTCP", "UTCP")):
+            s = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotSeriesNode", f"Plot_UTCP_{title}")
+            s.SetAndObserveTableNodeID(table.GetID())
+            s.SetXColumnName("tir_min")
+            s.SetYColumnName(cname)
+            s.SetLabel(title)
+            s.SetPlotType(s.PlotTypeLine)
+            s.SetColor(0.9, 0.1, 0.1) if title == "UTCP" else s.SetColor(0.1, 0.1, 0.9)
+            s.SetAndObservePlotChartNodeID(plot.GetID())
+        slicer.util.selectModule("Plots")
 
     # ------------------------------------------------------------------
     # Handlers: Mascaras
