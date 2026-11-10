@@ -22,3 +22,12 @@ venv/
 .vscode/
 Thumbs.db
 desktop.ini
+
+# --- Datos de trabajo del usuario (PHITS, mascaras, mallas): no versionar ---
+SlicerModule/PHITS/
+SlicerModule/PHITS_dosis_sintetica/
+SlicerModule/PHITS_prueba/
+SlicerModule/mascara/
+SlicerModule/vtk/
+SlicerModule/ejemplo/
+SlicerModule/organos_seg.txt
