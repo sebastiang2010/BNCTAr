@@ -14,7 +14,7 @@ import unittest
 import numpy as np
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.dirname(_HERE))  # SlicerModule/
+sys.path.insert(0, os.path.join(os.path.dirname(_HERE), 'utcp'))  # SlicerModule/utcp/
 
 from utcp_models import NTCP_BRAIN, NTCP_MUCOSA, TCP_PROVENZANO_REF
 from utcp_dvh import (cumulative_to_differential, dose_at_volume, eud,

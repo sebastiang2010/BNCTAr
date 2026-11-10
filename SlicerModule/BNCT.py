@@ -67,8 +67,11 @@ _NAME_MASKS_FOLDER = "Mascaras_Organos"
 # ------------------------------------------------------------------
 # Motor radiobiologico UTCP (capa pura, sin Qt/slicer; testeable)
 # ------------------------------------------------------------------
-if _MODULE_DIR not in sys.path:
-    sys.path.insert(0, _MODULE_DIR)
+# El motor vive en SlicerModule/utcp/ (subcarpeta) para que el escaneo de
+# modulos scripted de Slicer no intente instanciarlo como modulo de la GUI.
+_UTCP_LIB_DIR = os.path.join(_MODULE_DIR, 'utcp')
+if _UTCP_LIB_DIR not in sys.path:
+    sys.path.insert(0, _UTCP_LIB_DIR)
 try:
     from utcp_models import (builtin_ntcp_models, builtin_tcp_models,
                              default_isoe_model_for_roi)

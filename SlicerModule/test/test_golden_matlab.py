@@ -17,7 +17,7 @@ import unittest
 import numpy as np
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.dirname(_HERE))  # SlicerModule/
+sys.path.insert(0, os.path.join(os.path.dirname(_HERE), 'utcp'))  # SlicerModule/utcp/
 
 from utcp_engine import isoeffective_dose
 from utcp_tcp import tcp_provenzano
