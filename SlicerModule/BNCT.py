@@ -33,29 +33,29 @@ def _normName(s):
     if s is None:
         return ""
     t = str(s).strip().upper()
-    t = unicodedata.normalize('NFKD', t)
-    t = ''.join(c for c in t if not unicodedata.combining(c))
-    for ch in '_-./':
-        t = t.replace(ch, ' ')
-    t = re.sub(r'[^A-Z0-9 ]', ' ', t)
-    t = re.sub(r'\s+', ' ', t).strip()
+    t = unicodedata.normalize("NFKD", t)
+    t = "".join(c for c in t if not unicodedata.combining(c))
+    for ch in "_-./":
+        t = t.replace(ch, " ")
+    t = re.sub(r"[^A-Z0-9 ]", " ", t)
+    t = re.sub(r"\s+", " ", t).strip()
     return t
 
 
 # El STL vive dentro de SlicerModule/SLT
 _STL_PATH = _first_existing(
-    os.path.join(_MODULE_DIR, 'SLT', 'conos_pared_hueco.stl'),
+    os.path.join(_MODULE_DIR, "SLT", "conos_pared_hueco.stl"),
 )
 # La config json vive dentro de SlicerModule/json
 _ORGAN_CONFIG_PATH = _first_existing(
-    os.path.join(_MODULE_DIR, 'json', 'organ_config.jsonc'),
+    os.path.join(_MODULE_DIR, "json", "organ_config.jsonc"),
 )
 _MODELS_PATH = _first_existing(
-    os.path.join(_MODULE_DIR, 'json', 'models.jsonc'),
+    os.path.join(_MODULE_DIR, "json", "models.jsonc"),
 )
 # El MAT vive dentro de SlicerModule/mat
 _MAT_PATH = _first_existing(
-    os.path.join(_MODULE_DIR, 'mat', 'info_rois.mat'),
+    os.path.join(_MODULE_DIR, "mat", "info_rois.mat"),
 )
 
 # Prefijos de nombre usados para identificar los labelmaps (mascaras) creados por el modulo
@@ -69,14 +69,18 @@ _NAME_MASKS_FOLDER = "Mascaras_Organos"
 # ------------------------------------------------------------------
 # El motor vive en SlicerModule/utcp/ (subcarpeta) para que el escaneo de
 # modulos scripted de Slicer no intente instanciarlo como modulo de la GUI.
-_UTCP_LIB_DIR = os.path.join(_MODULE_DIR, 'utcp')
+_UTCP_LIB_DIR = os.path.join(_MODULE_DIR, "utcp")
 if _UTCP_LIB_DIR not in sys.path:
     sys.path.insert(0, _UTCP_LIB_DIR)
 try:
-    from utcp_models import (builtin_ntcp_models, builtin_tcp_models,
-                             default_isoe_model_for_roi)
+    from utcp_models import (
+        builtin_ntcp_models,
+        builtin_tcp_models,
+        default_isoe_model_for_roi,
+    )
     from utcp_engine import compute_utcp_point
     from utcp_time_optimizer import sweep_utcp
+
     _UTCP_IMPORT_ERROR = None
 except Exception as _e:  # pragma: no cover - dentro de Slicer
     _UTCP_IMPORT_ERROR = str(e)
@@ -87,15 +91,15 @@ def load_jsonc(path):
     """Carga un archivo JSONC (JSON con comentarios // y /* */)."""
     with open(path) as f:
         text = f.read()
-    text = re.sub(r'//.*?\n|/\*.*?\*/', '', text, flags=re.S)
+    text = re.sub(r"//.*?\n|/\*.*?\*/", "", text, flags=re.S)
     return json.loads(text)
 
 
 def _log(msg):
     """Escribe a un archivo de debug local."""
-    log_path = os.path.join(os.path.dirname(__file__), '_bnct_debug.txt')
-    with open(log_path, 'a', encoding='utf-8') as f:
-        f.write(msg + '\n')
+    log_path = os.path.join(os.path.dirname(__file__), "_bnct_debug.txt")
+    with open(log_path, "a", encoding="utf-8") as f:
+        f.write(msg + "\n")
 
 
 _stl_cargado = False  # Bandera de modulo: garantiza que el STL se cargue UNA sola vez
@@ -195,8 +199,10 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
         # Botón manual para cargar STL del reactor (respaldo)
         stlBtnLayout = qt.QHBoxLayout()
         self.btnLoadSTL = qt.QPushButton("Cargar STL Reactor (conos_pared_hueco.stl)")
-        self.btnLoadSTL.setToolTip("Carga el modelo 3D fijo de la pared y cono de salida del reactor en la escena de Slicer.")
-        self.btnLoadSTL.connect('clicked(bool)', self.onLoadSTL)
+        self.btnLoadSTL.setToolTip(
+            "Carga el modelo 3D fijo de la pared y cono de salida del reactor en la escena de Slicer."
+        )
+        self.btnLoadSTL.connect("clicked(bool)", self.onLoadSTL)
         stlBtnLayout.addWidget(self.btnLoadSTL)
         stlBtnLayout.addStretch()
         self.layout.addLayout(stlBtnLayout)
@@ -241,20 +247,23 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
         self.tabs.addTab(self.voxelTab, "Voxelizado")
         self._setupVoxelUI()
 
-        _log("BNCT module loaded: v2026-11-06 json-only gray_levels + autocarga voxel + labels wrap")
+        _log(
+            "BNCT module loaded: v2026-11-06 json-only gray_levels + autocarga voxel + labels wrap"
+        )
         self.layout.addStretch(1)
 
     def enter(self):
         """Se llama cada vez que el usuario abre el modulo: autocarga los niveles."""
         try:
-            if getattr(self, 'voxelMappingTable', None) is None:
+            if getattr(self, "voxelMappingTable", None) is None:
                 self._removeLegacyMaskNodes()
                 return
             removed = self._removeLegacyMaskNodes()
             if removed:
                 self.voxelStatusLabel.setText(
                     f"Se eliminaron {len(removed)} mascaras de una version anterior "
-                    "(niveles >=256).\nPresione 'Generar mascaras' para regenerarlas.")
+                    "(niveles >=256).\nPresione 'Generar mascaras' para regenerarlas."
+                )
                 self.voxelStatusLabel.setStyleSheet("color: #800; font-size: 11px;")
             if self.voxelMappingTable.rowCount == 0:
                 if self.voxelMaskSelector.currentNode() is not None:
@@ -272,19 +281,22 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
             self.stlStatusLabel.setStyleSheet("color: #080; font-size: 11px;")
             slicer.util.infoDisplay(
                 f"Modelo 3D del reactor cargado: {os.path.basename(_STL_PATH)}",
-                windowTitle="STL Reactor")
+                windowTitle="STL Reactor",
+            )
         else:
             self.stlStatusLabel.text = "STL: error al cargar. Verifica que el archivo exista en SLT/conos_pared_hueco.stl"
             self.stlStatusLabel.setStyleSheet("color: #800; font-size: 11px;")
             slicer.util.errorDisplay(
-                f"No se pudo cargar el STL: {_STL_PATH}",
-                windowTitle="STL Reactor")
+                f"No se pudo cargar el STL: {_STL_PATH}", windowTitle="STL Reactor"
+            )
 
     def onDetectCollisions(self):
         model1 = self.patientModelSelector.currentNode()
         model2 = self.coneModelSelector.currentNode()
         if not model1 or not model2:
-            slicer.util.errorDisplay("Seleccione el modelo del paciente y el modelo del cono/pared.")
+            slicer.util.errorDisplay(
+                "Seleccione el modelo del paciente y el modelo del cono/pared."
+            )
             return
 
         logic = BNCTLogic()
@@ -295,16 +307,24 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
             qt.QApplication.restoreOverrideCursor()
 
         if result is None:
-            self.collisionStatusLabel.setText("No se pudo analizar la colision. Ver _bnct_debug.txt.")
+            self.collisionStatusLabel.setText(
+                "No se pudo analizar la colision. Ver _bnct_debug.txt."
+            )
             self.collisionStatusLabel.setStyleSheet("color: #800; font-size: 11px;")
-            self.collisionReportText.setPlainText("Error al ejecutar la deteccion. Ver log.")
-            slicer.util.errorDisplay("No se pudo ejecutar la deteccion de colisiones. Ver el log.")
+            self.collisionReportText.setPlainText(
+                "Error al ejecutar la deteccion. Ver log."
+            )
+            slicer.util.errorDisplay(
+                "No se pudo ejecutar la deteccion de colisiones. Ver el log."
+            )
             return
 
-        contacts = int(result.get('contacts', 0))
-        collision = bool(result.get('collision', False))
+        contacts = int(result.get("contacts", 0))
+        collision = bool(result.get("collision", False))
         if collision:
-            self.collisionStatusLabel.setText(f"COLISION: {contacts} contactos detectados.")
+            self.collisionStatusLabel.setText(
+                f"COLISION: {contacts} contactos detectados."
+            )
             self.collisionStatusLabel.setStyleSheet("color: #800; font-size: 11px;")
             self.collisionReportText.setPlainText(
                 f"Modelo 1: {model1.GetName()}\n"
@@ -312,7 +332,9 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
                 f"Contactos: {contacts}\n"
                 f"Resultado: COLISION"
             )
-            slicer.util.warningDisplay(f"Se detectaron {contacts} contactos entre los modelos.")
+            slicer.util.warningDisplay(
+                f"Se detectaron {contacts} contactos entre los modelos."
+            )
         else:
             self.collisionStatusLabel.setText("Sin interseccion detectada.")
             self.collisionStatusLabel.setStyleSheet("color: #080; font-size: 11px;")
@@ -338,17 +360,24 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
                 self.voxelMappingTable.clearContents()
                 self.voxelMappingTable.setRowCount(0)
                 self.voxelStatusLabel.setText(
-                    "Sin mascara gris: seleccione Mascaras_Combinadas_Gris o genere las mascaras.")
+                    "Sin mascara gris: seleccione Mascaras_Combinadas_Gris o genere las mascaras."
+                )
                 self.voxelStatusLabel.setStyleSheet("color: #666; font-size: 11px;")
-                _log("onLoadVoxelLevels: sin mascara seleccionada (autocarga silenciosa)")
+                _log(
+                    "onLoadVoxelLevels: sin mascara seleccionada (autocarga silenciosa)"
+                )
                 return
-            slicer.util.errorDisplay("Seleccione la mascara gris (Mascaras_Combinadas_Gris).")
+            slicer.util.errorDisplay(
+                "Seleccione la mascara gris (Mascaras_Combinadas_Gris)."
+            )
             return
         try:
             arr = slicer.util.arrayFromVolume(maskNode)
             if arr is None:
                 if silent is not True:
-                    slicer.util.errorDisplay("No se pudo leer el volumen de la mascara.")
+                    slicer.util.errorDisplay(
+                        "No se pudo leer el volumen de la mascara."
+                    )
                 else:
                     _log("onLoadVoxelLevels: volumen no leible (autocarga silenciosa)")
                 return
@@ -361,12 +390,17 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
             # Si la mascara seleccionada tiene niveles de una version anterior
             # (>=256) y existe otra mas nueva cuyos niveles estan todos en la
             # config, cambiar a esa automaticamente (una sola vez, sin recursion).
-            if sin_config and any(gl >= 256 for gl in sin_config) \
-                    and not getattr(self, '_voxelAutoSwitching', False):
+            if (
+                sin_config
+                and any(gl >= 256 for gl in sin_config)
+                and not getattr(self, "_voxelAutoSwitching", False)
+            ):
                 clean = self._voxelFindCleanMask()
                 if clean is not None and clean.GetID() != maskNode.GetID():
-                    _log(f"onLoadVoxelLevels: '{maskNode.GetName()}' tiene niveles >=256; "
-                         f"cambiando a la mascara mas reciente '{clean.GetName()}'")
+                    _log(
+                        f"onLoadVoxelLevels: '{maskNode.GetName()}' tiene niveles >=256; "
+                        f"cambiando a la mascara mas reciente '{clean.GetName()}'"
+                    )
                     self._voxelAutoSwitching = True
                     try:
                         self.voxelMaskSelector.setCurrentNode(clean)
@@ -392,27 +426,42 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
 
             if sin_config:
                 sin_config_sorted = sorted(sin_config)
-                aviso = (f"AVISO: {len(sin_config)} niveles sin universo:\n"
-                         f"{sin_config_sorted}\n"
-                         "Corrija la columna 'universo (U=)' o regenere las mascaras.")
+                aviso = (
+                    f"AVISO: {len(sin_config)} niveles sin universo:\n"
+                    f"{sin_config_sorted}\n"
+                    "Corrija la columna 'universo (U=)' o regenere las mascaras."
+                )
                 if any(gl >= 256 for gl in sin_config):
-                    aviso += ("\nNiveles >=256: la mascara seleccionada fue creada por una "
-                              "version anterior del modulo.\n"
-                              "Presione 'Generar mascaras': el modulo borra esas mascaras "
-                              "viejas y crea una nueva con los gray_level de la config.")
+                    aviso += (
+                        "\nNiveles >=256: la mascara seleccionada fue creada por una "
+                        "version anterior del modulo.\n"
+                        "Presione 'Generar mascaras': el modulo borra esas mascaras "
+                        "viejas y crea una nueva con los gray_level de la config."
+                    )
                 self.voxelStatusLabel.setText(aviso)
                 self.voxelStatusLabel.setStyleSheet("color: #800; font-size: 11px;")
                 try:
-                    _log(f"onLoadVoxelLevels: nodo='{maskNode.GetName()}' id={maskNode.GetID()} "
-                         f"max={int(np.max(arr_int))} niveles={sorted(levels)} "
-                         f"sin_config={sin_config_sorted}")
-                    for _i in range(slicer.mrmlScene.GetNumberOfNodesByClass("vtkMRMLLabelMapVolumeNode")):
-                        _n = slicer.mrmlScene.GetNthNodeByClass(_i, "vtkMRMLLabelMapVolumeNode")
+                    _log(
+                        f"onLoadVoxelLevels: nodo='{maskNode.GetName()}' id={maskNode.GetID()} "
+                        f"max={int(np.max(arr_int))} niveles={sorted(levels)} "
+                        f"sin_config={sin_config_sorted}"
+                    )
+                    for _i in range(
+                        slicer.mrmlScene.GetNumberOfNodesByClass(
+                            "vtkMRMLLabelMapVolumeNode"
+                        )
+                    ):
+                        _n = slicer.mrmlScene.GetNthNodeByClass(
+                            _i, "vtkMRMLLabelMapVolumeNode"
+                        )
                         _nm = _n.GetName() or ""
-                        if not (_nm.startswith(_PREFIX_INDIVIDUAL) or _nm == _NAME_COMBINED
-                                or _nm.startswith(_NAME_COMBINED + "_")
-                                or _nm == _NAME_COMBINED_GRAY
-                                or _nm.startswith(_NAME_COMBINED_GRAY + "_")):
+                        if not (
+                            _nm.startswith(_PREFIX_INDIVIDUAL)
+                            or _nm == _NAME_COMBINED
+                            or _nm.startswith(_NAME_COMBINED + "_")
+                            or _nm == _NAME_COMBINED_GRAY
+                            or _nm.startswith(_NAME_COMBINED_GRAY + "_")
+                        ):
                             continue
                         _a = slicer.util.arrayFromVolume(_n)
                         _mx = int(np.max(np.asarray(_a))) if _a is not None else -1
@@ -424,13 +473,16 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
                 from_config = sum(1 for gl in levels if gl in defaults)
                 self.voxelStatusLabel.setText(
                     f"{len(levels)} gray_levels cargados desde '{maskNode.GetName()}' "
-                    f"({from_config} con universo desde organ_config.jsonc).")
+                    f"({from_config} con universo desde organ_config.jsonc)."
+                )
                 self.voxelStatusLabel.setStyleSheet("color: #060; font-size: 11px;")
                 _log(f"onLoadVoxelLevels: {len(levels)} niveles: {levels}")
         except Exception as e:
             _log(f"onLoadVoxelLevels: error: {e}")
             if silent is not True:
-                slicer.util.errorDisplay("Error leyendo los niveles de gris. Ver _bnct_debug.txt.")
+                slicer.util.errorDisplay(
+                    "Error leyendo los niveles de gris. Ver _bnct_debug.txt."
+                )
 
     def _onVoxelMaskChanged(self, node=None):
         """Autocarga la tabla de universos cada vez que cambia la mascara gris."""
@@ -439,7 +491,8 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
                 self.voxelMappingTable.clearContents()
                 self.voxelMappingTable.setRowCount(0)
                 self.voxelStatusLabel.setText(
-                    "Seleccione la mascara gris (Mascaras_Combinadas_Gris).")
+                    "Seleccione la mascara gris (Mascaras_Combinadas_Gris)."
+                )
                 self.voxelStatusLabel.setStyleSheet("color: #666; font-size: 11px;")
                 return
             self.onLoadVoxelLevels(silent=True)
@@ -451,7 +504,9 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
         todos en organ_config.jsonc (sin valores >=256 de versiones anteriores)."""
         defaults = self._voxelUniverseDefaults()
         candidates = []
-        for i in range(slicer.mrmlScene.GetNumberOfNodesByClass("vtkMRMLLabelMapVolumeNode")):
+        for i in range(
+            slicer.mrmlScene.GetNumberOfNodesByClass("vtkMRMLLabelMapVolumeNode")
+        ):
             n = slicer.mrmlScene.GetNthNodeByClass(i, "vtkMRMLLabelMapVolumeNode")
             nm = n.GetName() or ""
             if nm == _NAME_COMBINED_GRAY or nm.startswith(_NAME_COMBINED_GRAY + "_"):
@@ -478,19 +533,27 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
         """
         removed = []
         try:
-            n_nodes = slicer.mrmlScene.GetNumberOfNodesByClass("vtkMRMLLabelMapVolumeNode")
-            for i in range(n_nodes - 1, -1, -1):  # descendente: borrar no invalida indices menores
-                node = slicer.mrmlScene.GetNthNodeByClass(i, "vtkMRMLLabelMapVolumeNode")
+            n_nodes = slicer.mrmlScene.GetNumberOfNodesByClass(
+                "vtkMRMLLabelMapVolumeNode"
+            )
+            for i in range(
+                n_nodes - 1, -1, -1
+            ):  # descendente: borrar no invalida indices menores
+                node = slicer.mrmlScene.GetNthNodeByClass(
+                    i, "vtkMRMLLabelMapVolumeNode"
+                )
                 if node is None:
                     continue
                 nm = node.GetName() or ""
                 # Solo los labelmaps COMBINADOS pueden tener valores >=256: las
                 # mascaras individuales (Mascara_*) son binarias (0/1). Se evita
                 # borrar un labelmap del usuario que se llame "Mascara_algo".
-                is_module_mask = (nm == _NAME_COMBINED
-                                  or nm.startswith(_NAME_COMBINED + "_")
-                                  or nm == _NAME_COMBINED_GRAY
-                                  or nm.startswith(_NAME_COMBINED_GRAY + "_"))
+                is_module_mask = (
+                    nm == _NAME_COMBINED
+                    or nm.startswith(_NAME_COMBINED + "_")
+                    or nm == _NAME_COMBINED_GRAY
+                    or nm.startswith(_NAME_COMBINED_GRAY + "_")
+                )
                 if not is_module_mask:
                     continue
                 try:
@@ -506,7 +569,9 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
         except Exception as e:
             _log(f"_removeLegacyMaskNodes: error general: {e}")
         if removed:
-            _log(f"_removeLegacyMaskNodes: eliminadas {len(removed)} mascaras con niveles >=256: {removed}")
+            _log(
+                f"_removeLegacyMaskNodes: eliminadas {len(removed)} mascaras con niveles >=256: {removed}"
+            )
         else:
             _log("_removeLegacyMaskNodes: ninguna mascara con niveles >=256")
         return removed
@@ -515,14 +580,17 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
         """Genera voxel.dat a partir de la mascara gris y la tabla de mapeo."""
         maskNode = self.voxelMaskSelector.currentNode()
         if not maskNode:
-            slicer.util.errorDisplay("Seleccione la mascara gris (Mascaras_Combinadas_Gris).")
+            slicer.util.errorDisplay(
+                "Seleccione la mascara gris (Mascaras_Combinadas_Gris)."
+            )
             return
         if self.voxelMappingTable.rowCount == 0:
             self.onLoadVoxelLevels()
         if self.voxelMappingTable.rowCount == 0:
             slicer.util.errorDisplay(
                 "La tabla de universos esta vacia: la mascara seleccionada no tiene "
-                "niveles utiles. Verifique la 'Mascara gris' y regenere las mascaras.")
+                "niveles utiles. Verifique la 'Mascara gris' y regenere las mascaras."
+            )
             return
 
         universo_by_gray = {}
@@ -552,11 +620,17 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
                         gl = -1
                     legacy.append(gl)
             legacy.sort()
-            msg = ("Niveles sin universo asignado: " + ", ".join(str(g) for g in legacy) + ".\n")
+            msg = (
+                "Niveles sin universo asignado: "
+                + ", ".join(str(g) for g in legacy)
+                + ".\n"
+            )
             if any(g >= 256 for g in legacy):
-                msg += ("Los niveles >= 256 no existen en organ_config.jsonc: la mascara gris "
-                        "seleccionada es de una version anterior.\n"
-                        "Presione 'Generar mascaras' para regenerarla con los gray_level de la config.")
+                msg += (
+                    "Los niveles >= 256 no existen en organ_config.jsonc: la mascara gris "
+                    "seleccionada es de una version anterior.\n"
+                    "Presione 'Generar mascaras' para regenerarla con los gray_level de la config."
+                )
             else:
                 msg += "Asigne un universo (U=) valido en la tabla o regenere las mascaras."
             _log("onGenerateVoxel: " + msg.replace("\n", " "))
@@ -577,32 +651,41 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
         voxelNode = maskNode
         qt.QApplication.setOverrideCursor(qt.Qt.WaitCursor)
         try:
-            if (abs(resampleX - 1.0) > 1e-9 or abs(resampleY - 1.0) > 1e-9
-                    or abs(resampleZ - 1.0) > 1e-9):
+            if (
+                abs(resampleX - 1.0) > 1e-9
+                or abs(resampleY - 1.0) > 1e-9
+                or abs(resampleZ - 1.0) > 1e-9
+            ):
                 voxelNode = logic.resampleMaskVolume(
-                    maskNode, resampleX, resampleY, resampleZ)
+                    maskNode, resampleX, resampleY, resampleZ
+                )
             if voxelNode is None:
                 result = None
             else:
                 result = logic.generateVoxelDat(
-                    voxelNode, universo_by_gray, orientation, outputPath)
+                    voxelNode, universo_by_gray, orientation, outputPath
+                )
         finally:
             qt.QApplication.restoreOverrideCursor()
 
         if result is None:
-            self.voxelStatusLabel.setText("No se pudo generar el voxel.dat. Ver _bnct_debug.txt.")
+            self.voxelStatusLabel.setText(
+                "No se pudo generar el voxel.dat. Ver _bnct_debug.txt."
+            )
             self.voxelStatusLabel.setStyleSheet("color: #800; font-size: 11px;")
-            self.voxelReportText.setPlainText("Error al generar el voxel.dat. Ver el log.")
+            self.voxelReportText.setPlainText(
+                "Error al generar el voxel.dat. Ver el log."
+            )
             slicer.util.errorDisplay("No se pudo generar el voxel.dat. Ver el log.")
             return
 
-        shape = result.get('shape', ())
-        universos = result.get('universos', [])
+        shape = result.get("shape", ())
+        universos = result.get("universos", [])
         self.voxelStatusLabel.setText(f"voxel.dat generado: {result.get('path')}")
         self.voxelStatusLabel.setStyleSheet("color: #060; font-size: 11px;")
         resample_txt = "sin cambios (1,1,1)"
         if voxelNode is not maskNode:
-            resample_txt = (f"{resampleX:g} x {resampleY:g} x {resampleZ:g}")
+            resample_txt = f"{resampleX:g} x {resampleY:g} x {resampleZ:g}"
         self.voxelReportText.setPlainText(
             f"Mascara origen: {maskNode.GetName()}\n"
             f"Mascara usada: {voxelNode.GetName()}\n"
@@ -622,7 +705,8 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
         if not current or not os.path.isdir(current):
             current = _MODULE_DIR
         folder = qt.QFileDialog.getExistingDirectory(
-            slicer.util.mainWindow(), "Carpeta de salida del voxel.dat", current)
+            slicer.util.mainWindow(), "Carpeta de salida del voxel.dat", current
+        )
         if folder:
             self.voxelOutputPath.setText(os.path.join(folder, "voxel.dat"))
 
@@ -631,12 +715,12 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
         result = {}
         try:
             cfg = BNCTLogic.load_jsonc(_ORGAN_CONFIG_PATH)
-            aire = cfg.get('aire') or {}
-            if 'gray_level' in aire and 'universo' in aire:
-                result[int(aire['gray_level'])] = int(aire['universo'])
-            for roi in cfg.get('rois', []):
-                if 'gray_level' in roi and 'universo' in roi:
-                    result[int(roi['gray_level'])] = int(roi['universo'])
+            aire = cfg.get("aire") or {}
+            if "gray_level" in aire and "universo" in aire:
+                result[int(aire["gray_level"])] = int(aire["universo"])
+            for roi in cfg.get("rois", []):
+                if "gray_level" in roi and "universo" in roi:
+                    result[int(roi["gray_level"])] = int(roi["universo"])
         except Exception as e:
             _log(f"_voxelUniverseDefaults: no se pudo leer organ_config.jsonc: {e}")
         if 0 not in result:
@@ -647,7 +731,7 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
     # UI: Dosimetry
     # ------------------------------------------------------------------
     def _setupDosimetryUI(self):
-        fl = qt.QFormLayout()                      # sin padre: el tab ya tiene su QVBoxLayout
+        fl = qt.QFormLayout()  # sin padre: el tab ya tiene su QVBoxLayout
         self.dosimetryLayout.addLayout(fl)
 
         # Carpeta PHITS
@@ -664,7 +748,9 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
         self.referenceSelector.noneEnabled = True
         self.referenceSelector.showHidden = False
         self.referenceSelector.setMRMLScene(slicer.mrmlScene)
-        self.referenceSelector.connect('currentNodeChanged(vtkMRMLNode*)', self._onReferenceNodeChanged)
+        self.referenceSelector.connect(
+            "currentNodeChanged(vtkMRMLNode*)", self._onReferenceNodeChanged
+        )
         fl.addRow("Imagen de Referencia (CT/MRI):", self.referenceSelector)
 
         # Conc. Boro
@@ -686,41 +772,69 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
         fl.addRow("Factor de Escala (S):", self.scaleFactor)
 
         # Offsets
-        self.offsetX = qt.QDoubleSpinBox(); self.offsetX.setRange(-5000, 5000); self.offsetX.value = 0.0
-        self.offsetY = qt.QDoubleSpinBox(); self.offsetY.setRange(-5000, 5000); self.offsetY.value = 0.0
-        self.offsetZ = qt.QDoubleSpinBox(); self.offsetZ.setRange(-5000, 5000); self.offsetZ.value = 0.0
+        self.offsetX = qt.QDoubleSpinBox()
+        self.offsetX.setRange(-5000, 5000)
+        self.offsetX.value = 0.0
+        self.offsetY = qt.QDoubleSpinBox()
+        self.offsetY.setRange(-5000, 5000)
+        self.offsetY.value = 0.0
+        self.offsetZ = qt.QDoubleSpinBox()
+        self.offsetZ.setRange(-5000, 5000)
+        self.offsetZ.value = 0.0
         fl.addRow("Offset X (mm):", self.offsetX)
         fl.addRow("Offset Y (mm):", self.offsetY)
         fl.addRow("Offset Z (mm):", self.offsetZ)
 
         # Campos
-        self.fieldCountCombo = qt.QComboBox(); self.fieldCountCombo.addItems(["1 Campo", "2 Campos"])
+        self.fieldCountCombo = qt.QComboBox()
+        self.fieldCountCombo.addItems(["1 Campo", "2 Campos"])
         fl.addRow("Campos:", self.fieldCountCombo)
-        self.peso1Spin = qt.QDoubleSpinBox(); self.peso1Spin.setRange(0, 100); self.peso1Spin.setDecimals(4); self.peso1Spin.value = 1.0
+        self.peso1Spin = qt.QDoubleSpinBox()
+        self.peso1Spin.setRange(0, 100)
+        self.peso1Spin.setDecimals(4)
+        self.peso1Spin.value = 1.0
         fl.addRow("Peso Campo 1:", self.peso1Spin)
-        self.peso2Spin = qt.QDoubleSpinBox(); self.peso2Spin.setRange(0, 100); self.peso2Spin.setDecimals(4); self.peso2Spin.value = 1.0; self.peso2Spin.visible = False
+        self.peso2Spin = qt.QDoubleSpinBox()
+        self.peso2Spin.setRange(0, 100)
+        self.peso2Spin.setDecimals(4)
+        self.peso2Spin.value = 1.0
+        self.peso2Spin.visible = False
         fl.addRow("Peso Campo 2:", self.peso2Spin)
-        self.fieldCountCombo.connect('currentIndexChanged(int)', self._onFieldCountChanged)
+        self.fieldCountCombo.connect(
+            "currentIndexChanged(int)", self._onFieldCountChanged
+        )
 
         # Botones de accion
-        self.applyButton = qt.QPushButton("Interpolar Dosis"); self.applyButton.toolTip = "Alinea centros, carga archivos y genera volumen de dosis."
-        self.applyButton.connect('clicked(bool)', self.onApplyButton)
+        self.applyButton = qt.QPushButton("Interpolar Dosis")
+        self.applyButton.toolTip = (
+            "Alinea centros, carga archivos y genera volumen de dosis."
+        )
+        self.applyButton.connect("clicked(bool)", self.onApplyButton)
         fl.addRow(self.applyButton)
 
-        self.physDoseButton = qt.QPushButton("Calcular Dosis Fisica"); self.physDoseButton.toolTip = "Componentes KERMA -> dosis fisica con Tissue/Blood Ratio."
-        self.physDoseButton.connect('clicked(bool)', self.onPhysDose)
+        self.physDoseButton = qt.QPushButton("Calcular Dosis Fisica")
+        self.physDoseButton.toolTip = (
+            "Componentes KERMA -> dosis fisica con Tissue/Blood Ratio."
+        )
+        self.physDoseButton.connect("clicked(bool)", self.onPhysDose)
         fl.addRow(self.physDoseButton)
 
-        self.rbeDoseButton = qt.QPushButton("Calcular Dosis Pesada por RBE"); self.rbeDoseButton.toolTip = "Componentes, RBE, dosis pesada."
-        self.rbeDoseButton.connect('clicked(bool)', self.onRBEDose)
+        self.rbeDoseButton = qt.QPushButton("Calcular Dosis Pesada por RBE")
+        self.rbeDoseButton.toolTip = "Componentes, RBE, dosis pesada."
+        self.rbeDoseButton.connect("clicked(bool)", self.onRBEDose)
         fl.addRow(self.rbeDoseButton)
 
-        self.isoDoseButton = qt.QPushButton("Calcular Dosis Isoefectiva"); self.isoDoseButton.toolTip = "Dosis isoefectiva con modelo radiobiologico models.jsonc."
-        self.isoDoseButton.connect('clicked(bool)', self.onIsoDose)
+        self.isoDoseButton = qt.QPushButton("Calcular Dosis Isoefectiva")
+        self.isoDoseButton.toolTip = (
+            "Dosis isoefectiva con modelo radiobiologico models.jsonc."
+        )
+        self.isoDoseButton.connect("clicked(bool)", self.onIsoDose)
         fl.addRow(self.isoDoseButton)
 
         # --- Seccion KERMA por ROI ---
-        configBtn = ctk.ctkCollapsibleButton(); configBtn.text = "Configuracion KERMA por ROI"; configBtn.collapsed = False
+        configBtn = ctk.ctkCollapsibleButton()
+        configBtn.text = "Configuracion KERMA por ROI"
+        configBtn.collapsed = False
         self.dosimetryLayout.addWidget(configBtn)
         cfl = qt.QFormLayout(configBtn)
 
@@ -730,23 +844,43 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
         self.btnReload = qt.QPushButton("Recargar Default")
         self.btnAddRow = qt.QPushButton("+ Fila")
         self.btnDelRow = qt.QPushButton("- Fila")
-        for w in (self.btnSaveMat, self.btnSaveJson, self.btnReload, self.btnAddRow, self.btnDelRow):
+        for w in (
+            self.btnSaveMat,
+            self.btnSaveJson,
+            self.btnReload,
+            self.btnAddRow,
+            self.btnDelRow,
+        ):
             btnLay.addWidget(w)
         btnLay.addStretch()
         cfl.addRow(btnLay)
 
-        self.configTable = qt.QTableWidget(); self.configTable.setColumnCount(10)
-        self.configTable.setHorizontalHeaderLabels(["nroi","nmesh","Nombre","RBE_B","RBE_F","RBE_T","RBE_G","Ratio","Tumor","GrayLvl"])
+        self.configTable = qt.QTableWidget()
+        self.configTable.setColumnCount(10)
+        self.configTable.setHorizontalHeaderLabels(
+            [
+                "nroi",
+                "nmesh",
+                "Nombre",
+                "RBE_B",
+                "RBE_F",
+                "RBE_T",
+                "RBE_G",
+                "Ratio",
+                "Tumor",
+                "GrayLvl",
+            ]
+        )
         self.configTable.horizontalHeader().setStretchLastSection(True)
         self.configTable.setAlternatingRowColors(True)
         self.configTable.setMinimumHeight(250)
         cfl.addRow(self.configTable)
 
-        self.btnSaveMat.connect('clicked(bool)', self.onSaveMat)
-        self.btnSaveJson.connect('clicked(bool)', self.onSaveJson)
-        self.btnReload.connect('clicked(bool)', self.onReloadDefault)
-        self.btnAddRow.connect('clicked(bool)', self.onAddRow)
-        self.btnDelRow.connect('clicked(bool)', self.onRemoveRow)
+        self.btnSaveMat.connect("clicked(bool)", self.onSaveMat)
+        self.btnSaveJson.connect("clicked(bool)", self.onSaveJson)
+        self.btnReload.connect("clicked(bool)", self.onReloadDefault)
+        self.btnAddRow.connect("clicked(bool)", self.onAddRow)
+        self.btnDelRow.connect("clicked(bool)", self.onRemoveRow)
         self.configTable.cellChanged.connect(self._onConfigCellChanged)
 
         self._organ_config = self._loadOrganConfig()
@@ -765,13 +899,15 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
     # UI: DVH Analysis
     # ------------------------------------------------------------------
     def _setupDVHUI(self):
-        fl = qt.QFormLayout()                      # sin padre: el tab ya tiene su QVBoxLayout
+        fl = qt.QFormLayout()  # sin padre: el tab ya tiene su QVBoxLayout
         self.dvhLayout.addLayout(fl)
 
         # Limpiar nodos DVH viejos al iniciar
         try:
-            for cls, prefix in [("vtkMRMLPlotSeriesNode", "DVH_"),
-                                 ("vtkMRMLTableNode", "Table_DVH_")]:
+            for cls, prefix in [
+                ("vtkMRMLPlotSeriesNode", "DVH_"),
+                ("vtkMRMLTableNode", "Table_DVH_"),
+            ]:
                 coll = slicer.mrmlScene.GetNodesByClass(cls)
                 for i in range(coll.GetNumberOfItems()):
                     node = coll.GetItemAsObject(i)
@@ -783,29 +919,48 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
         except:
             pass
 
-        dvhColl = ctk.ctkCollapsibleButton(); dvhColl.text = "Analisis de DVH"; dvhColl.collapsed = True
+        dvhColl = ctk.ctkCollapsibleButton()
+        dvhColl.text = "Analisis de DVH"
+        dvhColl.collapsed = True
         fl.addRow(dvhColl)
         dvhFl = qt.QFormLayout(dvhColl)
 
-        organW = qt.QWidget(); organWl = qt.QVBoxLayout(organW); organWl.setContentsMargins(0,0,0,0)
-        self.dvhTodosCheck = qt.QCheckBox("Todos"); self.dvhTodosCheck.checked = True
+        organW = qt.QWidget()
+        organWl = qt.QVBoxLayout(organW)
+        organWl.setContentsMargins(0, 0, 0, 0)
+        self.dvhTodosCheck = qt.QCheckBox("Todos")
+        self.dvhTodosCheck.checked = True
         organWl.addWidget(self.dvhTodosCheck)
-        scroll = qt.QScrollArea(); scroll.setWidgetResizable(True); scroll.setMaximumHeight(180)
-        sw = qt.QWidget(); self.dvhScrollLayout = qt.QVBoxLayout(sw); self.dvhScrollLayout.setSpacing(2)
-        scroll.setWidget(sw); organWl.addWidget(scroll)
+        scroll = qt.QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setMaximumHeight(180)
+        sw = qt.QWidget()
+        self.dvhScrollLayout = qt.QVBoxLayout(sw)
+        self.dvhScrollLayout.setSpacing(2)
+        scroll.setWidget(sw)
+        organWl.addWidget(scroll)
         dvhFl.addRow("Organos:", organW)
-        self.dvhTodosCheck.connect('toggled(bool)', self._onDvhTodosToggled)
+        self.dvhTodosCheck.connect("toggled(bool)", self._onDvhTodosToggled)
 
-        self.dvhDoseTypeCombo = qt.QComboBox(); self.dvhDoseTypeCombo.addItems(["Dosis Fisica", "Dosis RBE", "Dosis Isoefectiva"])
+        self.dvhDoseTypeCombo = qt.QComboBox()
+        self.dvhDoseTypeCombo.addItems(
+            ["Dosis Fisica", "Dosis RBE", "Dosis Isoefectiva"]
+        )
         dvhFl.addRow("Tipo de Dosis:", self.dvhDoseTypeCombo)
 
-        self.dvhModeloCombo = qt.QComboBox(); self.dvhModeloCombo.setMinimumWidth(300); self.dvhModeloCombo.visible = False
+        self.dvhModeloCombo = qt.QComboBox()
+        self.dvhModeloCombo.setMinimumWidth(300)
+        self.dvhModeloCombo.visible = False
         dvhFl.addRow("Modelo:", self.dvhModeloCombo)
 
-        self.dvhB10Spin = qt.QDoubleSpinBox(); self.dvhB10Spin.setRange(0, 1000); self.dvhB10Spin.value = 15.0
+        self.dvhB10Spin = qt.QDoubleSpinBox()
+        self.dvhB10Spin.setRange(0, 1000)
+        self.dvhB10Spin.value = 15.0
         dvhFl.addRow("Conc. Boro (ppm):", self.dvhB10Spin)
 
-        self.dvhTirSpin = qt.QDoubleSpinBox(); self.dvhTirSpin.setRange(0, 1000); self.dvhTirSpin.value = 1.0
+        self.dvhTirSpin = qt.QDoubleSpinBox()
+        self.dvhTirSpin.setRange(0, 1000)
+        self.dvhTirSpin.value = 1.0
         dvhFl.addRow("TIR (min):", self.dvhTirSpin)
 
         self.maskVolumeSelector = slicer.qMRMLNodeComboBox()
@@ -818,10 +973,13 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
         self.maskVolumeSelector.setMRMLScene(slicer.mrmlScene)
         dvhFl.addRow("Mascara ROIs:", self.maskVolumeSelector)
 
-        self.dvhButton = qt.QPushButton("Calcular DVH"); self.dvhButton.enabled = True
+        self.dvhButton = qt.QPushButton("Calcular DVH")
+        self.dvhButton.enabled = True
         dvhFl.addRow(self.dvhButton)
-        self.dvhButton.connect('clicked(bool)', self.onDVHButton)
-        self.dvhDoseTypeCombo.connect('currentIndexChanged(int)', self._onDvhDoseTypeChanged)
+        self.dvhButton.connect("clicked(bool)", self.onDVHButton)
+        self.dvhDoseTypeCombo.connect(
+            "currentIndexChanged(int)", self._onDvhDoseTypeChanged
+        )
 
         self._dvh_models = self._loadModels()
         self.dvhModeloCombo.clear()
@@ -836,22 +994,30 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
     # ------------------------------------------------------------------
     def _setupMasksUI(self):
         """UI de la pestana Mascaras: genera labelmaps por ROI desde una segmentacion o un volumen."""
-        fl = qt.QFormLayout()                      # sin padre: el tab ya tiene su QVBoxLayout
+        fl = qt.QFormLayout()  # sin padre: el tab ya tiene su QVBoxLayout
         self.masksLayout.addLayout(fl)
 
         # Selector de estructura: acepta una Segmentacion (recomendado) o un volumen escalar
         self.structureSelector = slicer.qMRMLNodeComboBox()
-        self.structureSelector.nodeTypes = ["vtkMRMLSegmentationNode", "vtkMRMLScalarVolumeNode"]
+        self.structureSelector.nodeTypes = [
+            "vtkMRMLSegmentationNode",
+            "vtkMRMLScalarVolumeNode",
+        ]
         self.structureSelector.selectNodeUponCreation = True
         self.structureSelector.addEnabled = False
         self.structureSelector.removeEnabled = False
         self.structureSelector.noneEnabled = False
         self.structureSelector.showHidden = False
         self.structureSelector.setMRMLScene(slicer.mrmlScene)
-        self.structureSelector.setToolTip("Nodo de Segmentacion del Segment Editor: cada segmento se empareja "
-                                          "con su ROI por NOMBRE. Tambien acepta un volumen escalar donde cada ROI "
-                                          "son los voxeles cuyo valor coincide con su gray_level.")
-        fl.addRow("Estructura (Segmentacion o Volumen con gray_level):", self.structureSelector)
+        self.structureSelector.setToolTip(
+            "Nodo de Segmentacion del Segment Editor: cada segmento se empareja "
+            "con su ROI por NOMBRE. Tambien acepta un volumen escalar donde cada ROI "
+            "son los voxeles cuyo valor coincide con su gray_level."
+        )
+        fl.addRow(
+            "Estructura (Segmentacion o Volumen con gray_level):",
+            self.structureSelector,
+        )
 
         # Volumen de referencia: define la geometria (origin/spacing) de los labelmaps de salida
         self.segReferenceSelector = slicer.qMRMLNodeComboBox()
@@ -862,8 +1028,12 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
         self.segReferenceSelector.noneEnabled = True
         self.segReferenceSelector.showHidden = False
         self.segReferenceSelector.setMRMLScene(slicer.mrmlScene)
-        self.segReferenceSelector.setToolTip("Volumen de referencia que define la geometria (origin/spacing) de los labelmaps de salida.")
-        fl.addRow("Volumen de Referencia (geometria salida):", self.segReferenceSelector)
+        self.segReferenceSelector.setToolTip(
+            "Volumen de referencia que define la geometria (origin/spacing) de los labelmaps de salida."
+        )
+        fl.addRow(
+            "Volumen de Referencia (geometria salida):", self.segReferenceSelector
+        )
 
         # Info de la config
         self.masksConfigLabel = qt.QLabel(self._masksConfigInfo())
@@ -879,7 +1049,9 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
         optLay = qt.QVBoxLayout(self.masksOptionsCollapsible)  # padre = QWidget -> OK
         self.chkMasksIndividual = qt.QCheckBox("Generar un labelmap binario por ROI")
         self.chkMasksIndividual.checked = True
-        self.chkMasksCombined = qt.QCheckBox("Generar labelmap combinado (cada ROI = su gray_level)")
+        self.chkMasksCombined = qt.QCheckBox(
+            "Generar labelmap combinado (cada ROI = su gray_level)"
+        )
         self.chkMasksCombined.checked = True
         self.chkMasksSkipEmpty = qt.QCheckBox("Omitir ROIs sin voxeles")
         self.chkMasksSkipEmpty.checked = True
@@ -890,14 +1062,16 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
         # Botones
         btnRow = qt.QHBoxLayout()
         self.btnGenerateMasks = qt.QPushButton("Generar Mascaras")
-        self.btnGenerateMasks.toolTip = "Genera los labelmaps y verifica que no haya superposicion."
-        self.btnGenerateMasks.connect('clicked(bool)', self.onGenerateMasks)
+        self.btnGenerateMasks.toolTip = (
+            "Genera los labelmaps y verifica que no haya superposicion."
+        )
+        self.btnGenerateMasks.connect("clicked(bool)", self.onGenerateMasks)
         self.btnVerifyOverlap = qt.QPushButton("Verificar Superposicion")
         self.btnVerifyOverlap.toolTip = "Solo verifica, sin crear volumenes."
-        self.btnVerifyOverlap.connect('clicked(bool)', self.onVerifyOverlap)
+        self.btnVerifyOverlap.connect("clicked(bool)", self.onVerifyOverlap)
         self.btnCleanupMasks = qt.QPushButton("Limpiar Mascaras")
         self.btnCleanupMasks.toolTip = "Borra los labelmaps generados por este modulo."
-        self.btnCleanupMasks.connect('clicked(bool)', self.onCleanupMasks)
+        self.btnCleanupMasks.connect("clicked(bool)", self.onCleanupMasks)
         btnRow.addWidget(self.btnGenerateMasks)
         btnRow.addWidget(self.btnVerifyOverlap)
         btnRow.addWidget(self.btnCleanupMasks)
@@ -907,7 +1081,9 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
         # Tabla de resultados
         self.masksTable = qt.QTableWidget()
         self.masksTable.setColumnCount(5)
-        self.masksTable.setHorizontalHeaderLabels(["ROI", "gray_level", "nmesh", "Voxeles", "Estado"])
+        self.masksTable.setHorizontalHeaderLabels(
+            ["ROI", "gray_level", "nmesh", "Voxeles", "Estado"]
+        )
         self.masksTable.horizontalHeader().setStretchLastSection(True)
         self.masksTable.setEditTriggers(qt.QAbstractItemView.NoEditTriggers)
         self.masksTable.setSelectionBehavior(qt.QAbstractItemView.SelectRows)
@@ -918,7 +1094,9 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
         self.masksReportText = qt.QTextEdit()
         self.masksReportText.readOnly = True
         self.masksReportText.setMinimumHeight(140)
-        self.masksReportText.plainText = "Selecciona el volumen de estructura y pulsa 'Generar Mascaras'."
+        self.masksReportText.plainText = (
+            "Selecciona el volumen de estructura y pulsa 'Generar Mascaras'."
+        )
         self.masksLayout.addWidget(self.masksReportText)
 
     def _setupCollisionsUI(self):
@@ -944,15 +1122,21 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
         self.coneModelSelector.noneEnabled = True
         self.coneModelSelector.showHidden = False
         self.coneModelSelector.setMRMLScene(slicer.mrmlScene)
-        self.coneModelSelector.setToolTip("Modelo 3D del cono/pared del reactor (Conos_Pared_Reactor).")
+        self.coneModelSelector.setToolTip(
+            "Modelo 3D del cono/pared del reactor (Conos_Pared_Reactor)."
+        )
         fl.addRow("Modelo cono/pared:", self.coneModelSelector)
 
         self.btnDetectCollisions = qt.QPushButton("Detectar Colisiones")
-        self.btnDetectCollisions.setToolTip("Ejecuta vtkCollisionDetectionFilter entre los dos modelos seleccionados.")
-        self.btnDetectCollisions.connect('clicked(bool)', self.onDetectCollisions)
+        self.btnDetectCollisions.setToolTip(
+            "Ejecuta vtkCollisionDetectionFilter entre los dos modelos seleccionados."
+        )
+        self.btnDetectCollisions.connect("clicked(bool)", self.onDetectCollisions)
         fl.addRow(self.btnDetectCollisions)
 
-        self.collisionStatusLabel = qt.QLabel("Seleccione los dos modelos y presione Detectar Colisiones.")
+        self.collisionStatusLabel = qt.QLabel(
+            "Seleccione los dos modelos y presione Detectar Colisiones."
+        )
         self.collisionStatusLabel.setWordWrap(True)
         self.collisionStatusLabel.setStyleSheet("color: #666; font-size: 11px;")
         fl.addRow(self.collisionStatusLabel)
@@ -960,7 +1144,9 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
         self.collisionReportText = qt.QTextEdit()
         self.collisionReportText.setReadOnly(True)
         self.collisionReportText.setMaximumHeight(140)
-        self.collisionReportText.setPlaceholderText("Resultado de la deteccion de colisiones...")
+        self.collisionReportText.setPlaceholderText(
+            "Resultado de la deteccion de colisiones..."
+        )
         fl.addRow(self.collisionReportText)
 
         patient = slicer.mrmlScene.GetFirstNodeByName("Paciente")
@@ -986,7 +1172,8 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
         self.voxelMaskSelector.setMRMLScene(slicer.mrmlScene)
         self.voxelMaskSelector.setToolTip(
             "Labelmap gris combinado (Mascaras_Combinadas_Gris). Sus valores son los gray_level "
-            "que se traducen a universo (U=) en el voxel.dat.")
+            "que se traducen a universo (U=) en el voxel.dat."
+        )
         fl.addRow("Mascara gris:", self.voxelMaskSelector)
 
         # Purgar mascaras creadas por la version anterior (niveles 256+).
@@ -995,7 +1182,9 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
             _log(f"_setupVoxelUI: purgadas mascaras viejas: {removed_legacy}")
 
         grayNode = slicer.mrmlScene.GetFirstNodeByName(_NAME_COMBINED_GRAY)
-        for i in range(slicer.mrmlScene.GetNumberOfNodesByClass("vtkMRMLLabelMapVolumeNode")):
+        for i in range(
+            slicer.mrmlScene.GetNumberOfNodesByClass("vtkMRMLLabelMapVolumeNode")
+        ):
             n = slicer.mrmlScene.GetNthNodeByClass(i, "vtkMRMLLabelMapVolumeNode")
             nm = n.GetName() or ""
             if nm == _NAME_COMBINED_GRAY or nm.startswith(_NAME_COMBINED_GRAY + "_"):
@@ -1005,13 +1194,16 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
 
         self.voxelLoadLevelsButton = qt.QPushButton("Cargar gray_levels")
         self.voxelLoadLevelsButton.setToolTip(
-            "Lee los valores unicos de la mascara y llena la tabla de mapeo.")
-        self.voxelLoadLevelsButton.connect('clicked(bool)', self.onLoadVoxelLevels)
+            "Lee los valores unicos de la mascara y llena la tabla de mapeo."
+        )
+        self.voxelLoadLevelsButton.connect("clicked(bool)", self.onLoadVoxelLevels)
         fl.addRow(self.voxelLoadLevelsButton)
 
         self.voxelMappingTable = qt.QTableWidget()
         self.voxelMappingTable.setColumnCount(2)
-        self.voxelMappingTable.setHorizontalHeaderLabels(["gray_level", "universo (U=)"])
+        self.voxelMappingTable.setHorizontalHeaderLabels(
+            ["gray_level", "universo (U=)"]
+        )
         self.voxelMappingTable.setSelectionBehavior(qt.QAbstractItemView.SelectRows)
         self.voxelMappingTable.setMinimumHeight(180)
         self.voxelMappingTable.horizontalHeader().setStretchLastSection(True)
@@ -1020,7 +1212,8 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
         self.voxelOrientationCombo = qt.QComboBox()
         self.voxelOrientationCombo.addItems(["Axial", "Sagital", "Coronal"])
         self.voxelOrientationCombo.setToolTip(
-            "Orientacion de los cortes, igual que en genera_voxel_PHITS_v9.m.")
+            "Orientacion de los cortes, igual que en genera_voxel_PHITS_v9.m."
+        )
         fl.addRow("Orientacion:", self.voxelOrientationCombo)
 
         # --- Resample opcional (0 < f <= 1; 1 = sin cambios) ---
@@ -1028,17 +1221,21 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
         self.voxelResampleX = qt.QDoubleSpinBox()
         self.voxelResampleY = qt.QDoubleSpinBox()
         self.voxelResampleZ = qt.QDoubleSpinBox()
-        for _box, _axis in ((self.voxelResampleX, "X"),
-                            (self.voxelResampleY, "Y"),
-                            (self.voxelResampleZ, "Z")):
+        for _box, _axis in (
+            (self.voxelResampleX, "X"),
+            (self.voxelResampleY, "Y"),
+            (self.voxelResampleZ, "Z"),
+        ):
             _box.setDecimals(2)
             _box.setMinimum(0.01)
             _box.setMaximum(1.00)
             _box.setSingleStep(0.05)
             _box.setValue(1.00)
             _box.setMaximumWidth(70)
-            _box.setToolTip(f"Factor de resample en {_axis}. 1,00 = sin cambios; "
-                            f"0,50 = mitad de resolucion en ese eje.")
+            _box.setToolTip(
+                f"Factor de resample en {_axis}. 1,00 = sin cambios; "
+                f"0,50 = mitad de resolucion en ese eje."
+            )
             resampleLayout.addWidget(qt.QLabel(_axis + ":"))
             resampleLayout.addWidget(_box)
         resampleLayout.addStretch(1)
@@ -1046,23 +1243,26 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
 
         pathLayout = qt.QHBoxLayout()
         self.voxelOutputPath = qt.QLineEdit(
-            os.path.join(_MODULE_DIR, "voxel", "voxel.dat"))
+            os.path.join(_MODULE_DIR, "voxel", "voxel.dat")
+        )
         self.voxelOutputPath.setToolTip("Ruta del archivo voxel.dat a generar.")
         pathLayout.addWidget(self.voxelOutputPath)
         self.voxelBrowseButton = qt.QPushButton("...")
         self.voxelBrowseButton.setMaximumWidth(30)
-        self.voxelBrowseButton.connect('clicked(bool)', self.onBrowseVoxelOutput)
+        self.voxelBrowseButton.connect("clicked(bool)", self.onBrowseVoxelOutput)
         pathLayout.addWidget(self.voxelBrowseButton)
         fl.addRow("Salida:", pathLayout)
 
         self.voxelGenerateButton = qt.QPushButton("Generar voxel.dat")
         self.voxelGenerateButton.setToolTip(
-            "Aplica el mapeo, orienta, comprime con RLE y escribe el voxel.dat para PHITS.")
-        self.voxelGenerateButton.connect('clicked(bool)', self.onGenerateVoxel)
+            "Aplica el mapeo, orienta, comprime con RLE y escribe el voxel.dat para PHITS."
+        )
+        self.voxelGenerateButton.connect("clicked(bool)", self.onGenerateVoxel)
         fl.addRow(self.voxelGenerateButton)
 
         self.voxelStatusLabel = qt.QLabel(
-            "Seleccione la mascara gris, cargue los gray_levels y presione Generar voxel.dat.")
+            "Seleccione la mascara gris, cargue los gray_levels y presione Generar voxel.dat."
+        )
         self.voxelStatusLabel.setWordWrap(True)
         self.voxelStatusLabel.setStyleSheet("color: #666; font-size: 11px;")
         fl.addRow(self.voxelStatusLabel)
@@ -1070,15 +1270,18 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
         self.voxelReportText = qt.QTextEdit()
         self.voxelReportText.setReadOnly(True)
         self.voxelReportText.setMaximumHeight(120)
-        self.voxelReportText.setPlaceholderText("Resultado de la generacion del voxel.dat...")
+        self.voxelReportText.setPlaceholderText(
+            "Resultado de la generacion del voxel.dat..."
+        )
         fl.addRow(self.voxelReportText)
 
         # Autocarga: la config de universos (json) se aplica sola al elegir
         # o cambiar la mascara gris, sin presionar 'Cargar gray_levels'.
-        self.voxelMaskSelector.connect('currentNodeChanged(vtkMRMLNode*)',
-                                       self._onVoxelMaskChanged)
+        self.voxelMaskSelector.connect(
+            "currentNodeChanged(vtkMRMLNode*)", self._onVoxelMaskChanged
+        )
         try:
-            if getattr(self, '_organ_config', None) is None:
+            if getattr(self, "_organ_config", None) is None:
                 self._organ_config = self._loadOrganConfig()
             if self.voxelMaskSelector.currentNode() is not None:
                 self.onLoadVoxelLevels(silent=True)
@@ -1089,7 +1292,7 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
 
     def _masksConfigInfo(self):
         """Devuelve una descripcion corta de la config de ROIs disponible."""
-        n = len(getattr(self, '_organ_config', []) or [])
+        n = len(getattr(self, "_organ_config", []) or [])
         if n:
             return f"{n} ROIs desde config cargada ({os.path.basename(_ORGAN_CONFIG_PATH)})"
         return f"Se usara {os.path.basename(_MAT_PATH)}"
@@ -1108,13 +1311,22 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
         if not n_files:
             return None
         import numpy as np
-        bounds = [0]*6
+
+        bounds = [0] * 6
         refNode.GetBounds(bounds)
-        center_ras = np.array([(bounds[0]+bounds[1])/2.0,(bounds[2]+bounds[3])/2.0,(bounds[4]+bounds[5])/2.0])
+        center_ras = np.array(
+            [
+                (bounds[0] + bounds[1]) / 2.0,
+                (bounds[2] + bounds[3]) / 2.0,
+                (bounds[4] + bounds[5]) / 2.0,
+            ]
+        )
         logic = BNCTLogic()
         phits = logic.parsePHITS(n_files[0])
-        origin = np.array(phits['origin']); shape = np.array(phits['shape']); spacing = np.array(phits['spacing'])
-        center_phits = origin + (shape[::-1]-1) * spacing / 2.0
+        origin = np.array(phits["origin"])
+        shape = np.array(phits["shape"])
+        spacing = np.array(phits["spacing"])
+        center_phits = origin + (shape[::-1] - 1) * spacing / 2.0
         offset = center_ras - center_phits
         return (offset[0], offset[1], offset[2])
 
@@ -1123,25 +1335,37 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
             return
         offset = self._computeCenterOffset()
         if offset is not None:
-            self.offsetX.value = offset[0]; self.offsetY.value = offset[1]; self.offsetZ.value = offset[2]
+            self.offsetX.value = offset[0]
+            self.offsetY.value = offset[1]
+            self.offsetZ.value = offset[2]
             logging.info(f"Auto-centrado: offset={offset}")
 
     def _onFieldCountChanged(self, idx):
-        self.peso2Spin.visible = (idx == 1)
+        self.peso2Spin.visible = idx == 1
 
     def _discoverPhitsFiles(self, directory):
-        neutron_files = []; gamma_path = None
-        out_files = sorted([f for f in os.listdir(directory)
-                            if f.endswith('.out') and '_err' not in f.lower() and '_error' not in f.lower()])
+        neutron_files = []
+        gamma_path = None
+        out_files = sorted(
+            [
+                f
+                for f in os.listdir(directory)
+                if f.endswith(".out")
+                and "_err" not in f.lower()
+                and "_error" not in f.lower()
+            ]
+        )
         for f in out_files:
             low = f.lower()
-            if 'photon' in low or 'gamma' in low:
+            if "photon" in low or "gamma" in low:
                 gamma_path = os.path.join(directory, f)
-            elif re.match(r'mesh-\d+\.out', low):
+            elif re.match(r"mesh-\d+\.out", low):
                 neutron_files.append(os.path.join(directory, f))
+
         def mesh_number(p):
-            m = re.search(r'mesh-(\d+)', os.path.basename(p).lower())
+            m = re.search(r"mesh-(\d+)", os.path.basename(p).lower())
             return int(m.group(1)) if m else 9999
+
         neutron_files.sort(key=mesh_number)
         return neutron_files, gamma_path
 
@@ -1152,18 +1376,30 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
         self.configTable.blockSignals(True)
         self.configTable.setRowCount(len(config))
         for i, row in enumerate(config):
-            self.configTable.setItem(i, 0, qt.QTableWidgetItem(str(int(row['nroi']))))
-            self.configTable.setItem(i, 1, qt.QTableWidgetItem(str(int(row['nmesh']))))
-            self.configTable.setItem(i, 2, qt.QTableWidgetItem(str(row['name'])))
-            self.configTable.setItem(i, 3, qt.QTableWidgetItem(f"{row['rbe_boron']:.2f}"))
-            self.configTable.setItem(i, 4, qt.QTableWidgetItem(f"{row['rbe_fast']:.2f}"))
-            self.configTable.setItem(i, 5, qt.QTableWidgetItem(f"{row['rbe_thermal']:.2f}"))
-            self.configTable.setItem(i, 6, qt.QTableWidgetItem(f"{row['rbe_gamma']:.2f}"))
+            self.configTable.setItem(i, 0, qt.QTableWidgetItem(str(int(row["nroi"]))))
+            self.configTable.setItem(i, 1, qt.QTableWidgetItem(str(int(row["nmesh"]))))
+            self.configTable.setItem(i, 2, qt.QTableWidgetItem(str(row["name"])))
+            self.configTable.setItem(
+                i, 3, qt.QTableWidgetItem(f"{row['rbe_boron']:.2f}")
+            )
+            self.configTable.setItem(
+                i, 4, qt.QTableWidgetItem(f"{row['rbe_fast']:.2f}")
+            )
+            self.configTable.setItem(
+                i, 5, qt.QTableWidgetItem(f"{row['rbe_thermal']:.2f}")
+            )
+            self.configTable.setItem(
+                i, 6, qt.QTableWidgetItem(f"{row['rbe_gamma']:.2f}")
+            )
             self.configTable.setItem(i, 7, qt.QTableWidgetItem(f"{row['ratio']:.1f}"))
             chk = qt.QTableWidgetItem()
-            chk.setCheckState(qt.Qt.Checked if row.get('tumor', False) else qt.Qt.Unchecked)
+            chk.setCheckState(
+                qt.Qt.Checked if row.get("tumor", False) else qt.Qt.Unchecked
+            )
             self.configTable.setItem(i, 8, chk)
-            self.configTable.setItem(i, 9, qt.QTableWidgetItem(str(int(row.get('gray_level', 0)))))
+            self.configTable.setItem(
+                i, 9, qt.QTableWidgetItem(str(int(row.get("gray_level", 0))))
+            )
         self.configTable.resizeColumnsToContents()
         self.configTable.blockSignals(False)
 
@@ -1174,33 +1410,42 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
         prev = {}
         try:
             if os.path.exists(_ORGAN_CONFIG_PATH):
-                for r in load_jsonc(_ORGAN_CONFIG_PATH).get('rois', []):
-                    if isinstance(r, dict) and r.get('name'):
-                        prev[r['name']] = r
+                for r in load_jsonc(_ORGAN_CONFIG_PATH).get("rois", []):
+                    if isinstance(r, dict) and r.get("name"):
+                        prev[r["name"]] = r
         except Exception:
             pass
-        extra_keys = ('universo', 'tir', 'utcp_isoe_model',
-                      'utcp_ntcp_model', 'utcp_include')
+        extra_keys = (
+            "universo",
+            "tir",
+            "utcp_isoe_model",
+            "utcp_ntcp_model",
+            "utcp_include",
+        )
         config = []
         for i in range(self.configTable.rowCount):
+
             def val(col):
                 item = self.configTable.item(i, col)
-                return item.text() if item else ''
+                return item.text() if item else ""
+
             row = {
-                'nroi': int(float(val(0))) if val(0) else 0,
-                'nmesh': int(float(val(1))) if val(1) else 0,
-                'name': val(2),
-                'rbe_boron': float(val(3)) if val(3) else 0.0,
-                'rbe_fast': float(val(4)) if val(4) else 0.0,
-                'rbe_thermal': float(val(5)) if val(5) else 0.0,
-                'rbe_gamma': float(val(6)) if val(6) else 0.0,
-                'ratio': float(val(7)) if val(7) else 0.0,
-                'tumor': self.configTable.item(i, 8).checkState() == qt.Qt.Checked if self.configTable.item(i, 8) else False,
-                'gray_level': int(float(val(9))) if val(9) else 0,
+                "nroi": int(float(val(0))) if val(0) else 0,
+                "nmesh": int(float(val(1))) if val(1) else 0,
+                "name": val(2),
+                "rbe_boron": float(val(3)) if val(3) else 0.0,
+                "rbe_fast": float(val(4)) if val(4) else 0.0,
+                "rbe_thermal": float(val(5)) if val(5) else 0.0,
+                "rbe_gamma": float(val(6)) if val(6) else 0.0,
+                "ratio": float(val(7)) if val(7) else 0.0,
+                "tumor": self.configTable.item(i, 8).checkState() == qt.Qt.Checked
+                if self.configTable.item(i, 8)
+                else False,
+                "gray_level": int(float(val(9))) if val(9) else 0,
             }
             for k in extra_keys:
-                if k in prev.get(row['name'], {}) and k not in row:
-                    row[k] = prev[row['name']][k]
+                if k in prev.get(row["name"], {}) and k not in row:
+                    row[k] = prev[row["name"]][k]
             config.append(row)
         return config
 
@@ -1213,11 +1458,11 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
                     data = load_jsonc(_ORGAN_CONFIG_PATH)
                 except Exception:
                     data = {}
-            data['rois'] = config
+            data["rois"] = config
             d = os.path.dirname(_ORGAN_CONFIG_PATH)
             if not os.path.exists(d):
                 os.makedirs(d)
-            with open(_ORGAN_CONFIG_PATH, 'w', encoding='utf-8') as f:
+            with open(_ORGAN_CONFIG_PATH, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
         except Exception as e:
             logging.warning(f"No se pudo sincronizar organ_config.jsonc: {e}")
@@ -1227,7 +1472,7 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
             try:
                 logic = BNCTLogic()
                 data = logic.load_jsonc(_ORGAN_CONFIG_PATH)
-                config = data.get('rois', [])
+                config = data.get("rois", [])
                 if config:
                     return config
             except Exception as e:
@@ -1335,21 +1580,27 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
             return
         n_files, g_path = self._discoverPhitsFiles(phitsDir)
         if not n_files:
-            slicer.util.errorDisplay("No se encontraron archivos mesh-N.out (neutrones) en la carpeta.")
+            slicer.util.errorDisplay(
+                "No se encontraron archivos mesh-N.out (neutrones) en la carpeta."
+            )
             return
         if not g_path:
             logging.warning("No se encontro archivo gamma. Solo se cargaran neutrones.")
         if refNode:
             offset = self._computeCenterOffset()
             if offset is not None:
-                self.offsetX.value = offset[0]; self.offsetY.value = offset[1]; self.offsetZ.value = offset[2]
+                self.offsetX.value = offset[0]
+                self.offsetY.value = offset[1]
+                self.offsetZ.value = offset[2]
                 logging.info(f"Auto-centrado en Interpolar Dosis: offset={offset}")
         print("--- Archivos PHITS encontrados ---")
         print(f"  Neutrones ({len(n_files)}):")
         for f in n_files:
             print(f"    - {os.path.basename(f)}")
         print(f"  Gamma: {os.path.basename(g_path) if g_path else 'No encontrado'}")
-        rbe_factors = {'offset': (self.offsetX.value, self.offsetY.value, self.offsetZ.value)}
+        rbe_factors = {
+            "offset": (self.offsetX.value, self.offsetY.value, self.offsetZ.value)
+        }
         try:
             qt.QApplication.setOverrideCursor(qt.Qt.WaitCursor)
             logic._cleanupOldVolumes()
@@ -1359,7 +1610,9 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
                 if os.path.isdir(dir_c2):
                     n_files_2, g_path_2 = self._discoverPhitsFiles(dir_c2)
                     if n_files_2:
-                        logic.run(n_files_2, g_path_2, refNode, rbe_factors, suffix="_C2")
+                        logic.run(
+                            n_files_2, g_path_2, refNode, rbe_factors, suffix="_C2"
+                        )
                     else:
                         print("  campo_2 vacio o sin archivos validos")
                 else:
@@ -1367,23 +1620,30 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
         except Exception as e:
             slicer.util.errorDisplay(f"Error durante el calculo: {str(e)}")
             import traceback
+
             logging.error(traceback.format_exc())
         finally:
             qt.QApplication.restoreOverrideCursor()
 
     def _getKermaVolumesForMesh(self, mesh_number):
         import re
-        exclude = ["Dosis_Fisica_BNCT", "Dosis_RBE_BNCT", "Dosis_Final_BNCT", "Dosis_IsoE_BNCT"]
+
+        exclude = [
+            "Dosis_Fisica_BNCT",
+            "Dosis_RBE_BNCT",
+            "Dosis_Final_BNCT",
+            "Dosis_IsoE_BNCT",
+        ]
         volumes = []
         for node in slicer.mrmlScene.GetNodesByClass("vtkMRMLScalarVolumeNode"):
             name = node.GetName()
             if name in exclude:
                 continue
-            if name == 'Gamma_Photon' or name == 'Gamma_Photon_C2':
+            if name == "Gamma_Photon" or name == "Gamma_Photon_C2":
                 volumes.append((node, name))
                 continue
-            if 'Kerma' in name:
-                match = re.search(r'Kerma(\d+)(_C2)?$', name)
+            if "Kerma" in name:
+                match = re.search(r"Kerma(\d+)(_C2)?$", name)
                 if match and int(match.group(1)) == mesh_number:
                     volumes.append((node, name))
         return volumes
@@ -1393,66 +1653,89 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
         if not config:
             slicer.util.errorDisplay(
                 "No hay configuracion de organos disponible. "
-                "Configure los ROIs en la pestaña Dosimetry.")
+                "Configure los ROIs en la pestaña Dosimetry."
+            )
             return None
         dialog = qt.QDialog(self.parent)
         dialog.setWindowTitle(title)
         dialog.setMinimumWidth(440)
-        layout = qt.QVBoxLayout(dialog); layout.setSpacing(6)
+        layout = qt.QVBoxLayout(dialog)
+        layout.setSpacing(6)
         organLay = qt.QHBoxLayout()
-        organLabel = qt.QLabel("Organo:"); organCombo = qt.QComboBox(); organCombo.setMinimumWidth(200)
+        organLabel = qt.QLabel("Organo:")
+        organCombo = qt.QComboBox()
+        organCombo.setMinimumWidth(200)
         for row in config:
             organCombo.addItem(f"{row['name']}  [mesh {int(row['nmesh'])}]")
-        organLay.addWidget(organLabel); organLay.addWidget(organCombo, 1)
+        organLay.addWidget(organLabel)
+        organLay.addWidget(organCombo, 1)
         layout.addLayout(organLay)
-        meshInfo = qt.QLabel(); meshInfo.setStyleSheet("color: #888; font-size: 10px;")
+        meshInfo = qt.QLabel()
+        meshInfo.setStyleSheet("color: #888; font-size: 10px;")
         layout.addWidget(meshInfo)
-        valuesGroup = qt.QGroupBox("Parametros"); valuesLay = qt.QFormLayout(valuesGroup)
-        ratioDisplay = qt.QLabel(); valuesLay.addRow("Ratio T/S:", ratioDisplay)
+        valuesGroup = qt.QGroupBox("Parametros")
+        valuesLay = qt.QFormLayout(valuesGroup)
+        ratioDisplay = qt.QLabel()
+        valuesLay.addRow("Ratio T/S:", ratioDisplay)
         rbeDisplays = {}
         if ask_rbe:
-            for key, label in [('rbe_boron','RBE Boro'),('rbe_fast','RBE Fast'),('rbe_thermal','RBE Thermal'),('rbe_gamma','RBE Gamma')]:
-                lbl = qt.QLabel(); valuesLay.addRow(f"{label}:", lbl); rbeDisplays[key] = lbl
+            for key, label in [
+                ("rbe_boron", "RBE Boro"),
+                ("rbe_fast", "RBE Fast"),
+                ("rbe_thermal", "RBE Thermal"),
+                ("rbe_gamma", "RBE Gamma"),
+            ]:
+                lbl = qt.QLabel()
+                valuesLay.addRow(f"{label}:", lbl)
+                rbeDisplays[key] = lbl
         layout.addWidget(valuesGroup)
+
         def update_values():
             idx = organCombo.currentIndex
             if idx < 0 or idx >= len(config):
                 return
             row = config[idx]
             ratioDisplay.text = f"{row['ratio']:.2f}"
-            nmesh = int(row['nmesh'])
+            nmesh = int(row["nmesh"])
             meshInfo.text = f"Mesh: {nmesh}"
             if ask_rbe:
-                rbeDisplays['rbe_boron'].text = f"{row['rbe_boron']:.2f}"
-                rbeDisplays['rbe_fast'].text = f"{row['rbe_fast']:.2f}"
-                rbeDisplays['rbe_thermal'].text = f"{row['rbe_thermal']:.2f}"
-                rbeDisplays['rbe_gamma'].text = f"{row['rbe_gamma']:.2f}"
-        organCombo.connect('currentIndexChanged(int)', lambda idx: update_values())
+                rbeDisplays["rbe_boron"].text = f"{row['rbe_boron']:.2f}"
+                rbeDisplays["rbe_fast"].text = f"{row['rbe_fast']:.2f}"
+                rbeDisplays["rbe_thermal"].text = f"{row['rbe_thermal']:.2f}"
+                rbeDisplays["rbe_gamma"].text = f"{row['rbe_gamma']:.2f}"
+
+        organCombo.connect("currentIndexChanged(int)", lambda idx: update_values())
         update_values()
-        btnLay = qt.QHBoxLayout(); okBtn = qt.QPushButton("OK"); cancelBtn = qt.QPushButton("Cancel")
-        btnLay.addStretch(); btnLay.addWidget(okBtn); btnLay.addWidget(cancelBtn)
+        btnLay = qt.QHBoxLayout()
+        okBtn = qt.QPushButton("OK")
+        cancelBtn = qt.QPushButton("Cancel")
+        btnLay.addStretch()
+        btnLay.addWidget(okBtn)
+        btnLay.addWidget(cancelBtn)
         layout.addLayout(btnLay)
-        okBtn.connect('clicked()', dialog.accept)
-        cancelBtn.connect('clicked()', dialog.reject)
+        okBtn.connect("clicked()", dialog.accept)
+        cancelBtn.connect("clicked()", dialog.reject)
         if dialog.exec() != qt.QDialog.Accepted:
             return None
         idx = organCombo.currentIndex
         organRow = config[idx]
-        nmesh = int(organRow['nmesh'])
+        nmesh = int(organRow["nmesh"])
         volumes = self._getKermaVolumesForMesh(nmesh)
         if not volumes:
-            slicer.util.errorDisplay(f"No se encontraron componentes KERMA para mesh {nmesh}.")
+            slicer.util.errorDisplay(
+                f"No se encontraron componentes KERMA para mesh {nmesh}."
+            )
             return None
         rbeMapped = []
         for node, vol_name in volumes:
-            if 'Boron' in vol_name or 'boro' in vol_name.lower():
-                rbeMapped.append(organRow['rbe_boron'])
-            elif 'Fast' in vol_name:
-                rbeMapped.append(organRow['rbe_fast'])
-            elif 'Thermal' in vol_name or 'thn' in vol_name.lower():
-                rbeMapped.append(organRow['rbe_thermal'])
-            elif 'Gamma' in vol_name or 'photon' in vol_name.lower():
-                rbeMapped.append(organRow['rbe_gamma'])
+            if "Boron" in vol_name or "boro" in vol_name.lower():
+                rbeMapped.append(organRow["rbe_boron"])
+            elif "Fast" in vol_name:
+                rbeMapped.append(organRow["rbe_fast"])
+            elif "Thermal" in vol_name or "thn" in vol_name.lower():
+                rbeMapped.append(organRow["rbe_thermal"])
+            elif "Gamma" in vol_name or "photon" in vol_name.lower():
+                rbeMapped.append(organRow["rbe_gamma"])
             else:
                 rbeMapped.append(1.0)
         return (organRow, rbeMapped, volumes)
@@ -1467,13 +1750,19 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
         try:
             qt.QApplication.setOverrideCursor(qt.Qt.WaitCursor)
             logic.calculatePhysicalDose(
-                nodes=nodes, b10_conc=self.boronConcentration.value,
-                ratio_tb=organRow['ratio'], tir=self.factorTIR.value,
-                scale=self.scaleFactor.value, peso1=self.peso1Spin.value, peso2=self.peso2Spin.value)
+                nodes=nodes,
+                b10_conc=self.boronConcentration.value,
+                ratio_tb=organRow["ratio"],
+                tir=self.factorTIR.value,
+                scale=self.scaleFactor.value,
+                peso1=self.peso1Spin.value,
+                peso2=self.peso2Spin.value,
+            )
             slicer.util.infoDisplay("Dosis Fisica calculada correctamente.")
         except Exception as e:
             slicer.util.errorDisplay(f"Error: {str(e)}")
             import traceback
+
             logging.error(traceback.format_exc())
         finally:
             qt.QApplication.restoreOverrideCursor()
@@ -1488,13 +1777,20 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
         try:
             qt.QApplication.setOverrideCursor(qt.Qt.WaitCursor)
             logic.calculateRBEDose(
-                nodes=nodes, rbe_values=rbeMapped, b10_conc=self.boronConcentration.value,
-                ratio_tb=organRow['ratio'], tir=self.factorTIR.value,
-                scale=self.scaleFactor.value, peso1=self.peso1Spin.value, peso2=self.peso2Spin.value)
+                nodes=nodes,
+                rbe_values=rbeMapped,
+                b10_conc=self.boronConcentration.value,
+                ratio_tb=organRow["ratio"],
+                tir=self.factorTIR.value,
+                scale=self.scaleFactor.value,
+                peso1=self.peso1Spin.value,
+                peso2=self.peso2Spin.value,
+            )
             slicer.util.infoDisplay("Dosis RBE calculada correctamente.")
         except Exception as e:
             slicer.util.errorDisplay(f"Error: {str(e)}")
             import traceback
+
             logging.error(traceback.format_exc())
         finally:
             qt.QApplication.restoreOverrideCursor()
@@ -1505,77 +1801,140 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
             slicer.util.errorDisplay("No hay configuracion de organos disponible.")
             return None
         if not self._models_data:
-            slicer.util.errorDisplay("No se pudieron cargar los modelos radiobiologicos.")
+            slicer.util.errorDisplay(
+                "No se pudieron cargar los modelos radiobiologicos."
+            )
             return None
-        models = self._models_data.get('isoeffective', [])
+        models = self._models_data.get("isoeffective", [])
         if not models:
             slicer.util.errorDisplay("No hay modelos isoefectivos en models.jsonc.")
             return None
         dialog = qt.QDialog(self.parent)
-        dialog.setWindowTitle("Dosis Isoefectiva"); dialog.setMinimumWidth(520)
-        layout = qt.QVBoxLayout(dialog); layout.setSpacing(6)
-        organLay = qt.QHBoxLayout(); organLabel = qt.QLabel("Organo:"); organCombo = qt.QComboBox(); organCombo.setMinimumWidth(200)
+        dialog.setWindowTitle("Dosis Isoefectiva")
+        dialog.setMinimumWidth(520)
+        layout = qt.QVBoxLayout(dialog)
+        layout.setSpacing(6)
+        organLay = qt.QHBoxLayout()
+        organLabel = qt.QLabel("Organo:")
+        organCombo = qt.QComboBox()
+        organCombo.setMinimumWidth(200)
         for row in config:
             organCombo.addItem(f"{row['name']}  [mesh {int(row['nmesh'])}]")
-        organLay.addWidget(organLabel); organLay.addWidget(organCombo, 1); layout.addLayout(organLay)
-        meshInfo = qt.QLabel(); meshInfo.setStyleSheet("color: #888; font-size: 10px;")
+        organLay.addWidget(organLabel)
+        organLay.addWidget(organCombo, 1)
+        layout.addLayout(organLay)
+        meshInfo = qt.QLabel()
+        meshInfo.setStyleSheet("color: #888; font-size: 10px;")
         layout.addWidget(meshInfo)
-        modelLay = qt.QHBoxLayout(); modelLabel = qt.QLabel("Modelo:"); modelCombo = qt.QComboBox(); modelCombo.setMinimumWidth(300)
+        modelLay = qt.QHBoxLayout()
+        modelLabel = qt.QLabel("Modelo:")
+        modelCombo = qt.QComboBox()
+        modelCombo.setMinimumWidth(300)
         for m in models:
             modelCombo.addItem(f"{m['id']}. {m['name']}")
-        modelLay.addWidget(modelLabel); modelLay.addWidget(modelCombo, 1); layout.addLayout(modelLay)
-        infoLabel = qt.QLabel(); infoLabel.setWordWrap(True); infoLabel.setStyleSheet("color: #666; font-style: italic;")
+        modelLay.addWidget(modelLabel)
+        modelLay.addWidget(modelCombo, 1)
+        layout.addLayout(modelLay)
+        infoLabel = qt.QLabel()
+        infoLabel.setWordWrap(True)
+        infoLabel.setStyleSheet("color: #666; font-style: italic;")
         layout.addWidget(infoLabel)
-        paramsGroup = qt.QGroupBox("Parametros del modelo"); paramsLay = qt.QFormLayout(paramsGroup)
+        paramsGroup = qt.QGroupBox("Parametros del modelo")
+        paramsLay = qt.QFormLayout(paramsGroup)
         paramDisplays = {}
-        paramKeys = [('alpha_r','α_r'),('beta_r','β_r'),('alpha_boro','α_boro'),('beta_boro','β_boro'),
-                     ('alpha_thn','α_thn'),('beta_thn','β_thn'),('alpha_fast','α_fast'),('beta_fast','β_fast'),
-                     ('tof','tof'),('tos','tos'),('pf_g','pf_g'),('ps_g','ps_g'),('pf_bnct','pf_bnct'),('ps_bnct','ps_bnct')]
+        paramKeys = [
+            ("alpha_r", "α_r"),
+            ("beta_r", "β_r"),
+            ("alpha_boro", "α_boro"),
+            ("beta_boro", "β_boro"),
+            ("alpha_thn", "α_thn"),
+            ("beta_thn", "β_thn"),
+            ("alpha_fast", "α_fast"),
+            ("beta_fast", "β_fast"),
+            ("tof", "tof"),
+            ("tos", "tos"),
+            ("pf_g", "pf_g"),
+            ("ps_g", "ps_g"),
+            ("pf_bnct", "pf_bnct"),
+            ("ps_bnct", "ps_bnct"),
+        ]
         for key, display in paramKeys:
-            lbl = qt.QLabel(); paramsLay.addRow(f"{display}:", lbl); paramDisplays[key] = lbl
+            lbl = qt.QLabel()
+            paramsLay.addRow(f"{display}:", lbl)
+            paramDisplays[key] = lbl
         layout.addWidget(paramsGroup)
-        bratioLay = qt.QHBoxLayout(); bratioLabel = qt.QLabel("Tumor/blood B10 ratio:"); bratioSpin = qt.QDoubleSpinBox()
-        bratioSpin.setRange(0, 100); bratioSpin.setDecimals(2); bratioSpin.value = 3.5; bratioSpin.setFixedWidth(120)
-        bratioLay.addWidget(bratioLabel); bratioLay.addWidget(bratioSpin); bratioLay.addStretch()
+        bratioLay = qt.QHBoxLayout()
+        bratioLabel = qt.QLabel("Tumor/blood B10 ratio:")
+        bratioSpin = qt.QDoubleSpinBox()
+        bratioSpin.setRange(0, 100)
+        bratioSpin.setDecimals(2)
+        bratioSpin.value = 3.5
+        bratioSpin.setFixedWidth(120)
+        bratioLay.addWidget(bratioLabel)
+        bratioLay.addWidget(bratioSpin)
+        bratioLay.addStretch()
         layout.addLayout(bratioLay)
+
         def update_model():
             idx = modelCombo.currentIndex
             if idx < 0 or idx >= len(models):
                 return
             m = models[idx]
-            infoLabel.text = m.get('ref', '')
+            infoLabel.text = m.get("ref", "")
             for key in paramKeys:
-                k = key[0]; val = m.get(k, 0)
+                k = key[0]
+                val = m.get(k, 0)
                 paramDisplays[k].text = "0" if abs(val) < 1e-10 else f"{val:.6g}"
+
         def update_organ():
             idx = organCombo.currentIndex
             if idx < 0 or idx >= len(config):
                 return
             row = config[idx]
             meshInfo.text = f"Mesh: {int(row['nmesh'])}"
-        organCombo.connect('currentIndexChanged(int)', lambda i: update_organ())
-        modelCombo.connect('currentIndexChanged(int)', lambda i: update_model())
-        update_organ(); update_model()
-        btnLay = qt.QHBoxLayout(); okBtn = qt.QPushButton("OK"); cancelBtn = qt.QPushButton("Cancel")
-        btnLay.addStretch(); btnLay.addWidget(okBtn); btnLay.addWidget(cancelBtn); layout.addLayout(btnLay)
-        okBtn.connect('clicked()', dialog.accept)
-        cancelBtn.connect('clicked()', dialog.reject)
+
+        organCombo.connect("currentIndexChanged(int)", lambda i: update_organ())
+        modelCombo.connect("currentIndexChanged(int)", lambda i: update_model())
+        update_organ()
+        update_model()
+        btnLay = qt.QHBoxLayout()
+        okBtn = qt.QPushButton("OK")
+        cancelBtn = qt.QPushButton("Cancel")
+        btnLay.addStretch()
+        btnLay.addWidget(okBtn)
+        btnLay.addWidget(cancelBtn)
+        layout.addLayout(btnLay)
+        okBtn.connect("clicked()", dialog.accept)
+        cancelBtn.connect("clicked()", dialog.reject)
         if dialog.exec() != qt.QDialog.Accepted:
             return None
-        orgIdx = organCombo.currentIndex; mdlIdx = modelCombo.currentIndex
-        organRow = config[orgIdx]; nmesh = int(organRow['nmesh']); modelParams = models[mdlIdx]; bratio = bratioSpin.value
+        orgIdx = organCombo.currentIndex
+        mdlIdx = modelCombo.currentIndex
+        organRow = config[orgIdx]
+        nmesh = int(organRow["nmesh"])
+        modelParams = models[mdlIdx]
+        bratio = bratioSpin.value
         volumes = self._getKermaVolumesForMesh(nmesh)
         if not volumes:
-            slicer.util.errorDisplay(f"No se encontraron componentes KERMA para mesh {nmesh}.")
+            slicer.util.errorDisplay(
+                f"No se encontraron componentes KERMA para mesh {nmesh}."
+            )
             return None
         paramsArr = [
-            modelParams['alpha_r'], modelParams['beta_r'],
-            modelParams['alpha_boro'], modelParams['beta_boro'],
-            modelParams['alpha_thn'], modelParams['beta_thn'],
-            modelParams['alpha_fast'], modelParams['beta_fast'],
-            modelParams['tof'], modelParams['tos'],
-            modelParams['pf_g'], modelParams['ps_g'],
-            modelParams['pf_bnct'], modelParams['ps_bnct']
+            modelParams["alpha_r"],
+            modelParams["beta_r"],
+            modelParams["alpha_boro"],
+            modelParams["beta_boro"],
+            modelParams["alpha_thn"],
+            modelParams["beta_thn"],
+            modelParams["alpha_fast"],
+            modelParams["beta_fast"],
+            modelParams["tof"],
+            modelParams["tos"],
+            modelParams["pf_g"],
+            modelParams["ps_g"],
+            modelParams["pf_bnct"],
+            modelParams["ps_bnct"],
         ]
         return (paramsArr, bratio, volumes, organRow)
 
@@ -1585,28 +1944,42 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
             return
         paramsArr, bratio, volumes, organRow = result
         nodes = [node for node, _ in volumes]
-        compArrays = {'boro': None, 'thn': None, 'fast': None, 'gamma': None}
+        compArrays = {"boro": None, "thn": None, "fast": None, "gamma": None}
         for node, vol_name in volumes:
             arr = slicer.util.arrayFromVolume(node).astype(np.float64)
-            if 'Boron' in vol_name or 'boro' in vol_name.lower():
-                compArrays['boro'] = arr if compArrays['boro'] is None else compArrays['boro'] + arr
-            elif 'Thermal' in vol_name or 'thn' in vol_name.lower():
-                compArrays['thn'] = arr if compArrays['thn'] is None else compArrays['thn'] + arr
-            elif 'Fast' in vol_name:
-                compArrays['fast'] = arr if compArrays['fast'] is None else compArrays['fast'] + arr
-            elif 'Gamma' in vol_name or 'photon' in vol_name.lower():
-                compArrays['gamma'] = arr if compArrays['gamma'] is None else compArrays['gamma'] + arr
+            if "Boron" in vol_name or "boro" in vol_name.lower():
+                compArrays["boro"] = (
+                    arr if compArrays["boro"] is None else compArrays["boro"] + arr
+                )
+            elif "Thermal" in vol_name or "thn" in vol_name.lower():
+                compArrays["thn"] = (
+                    arr if compArrays["thn"] is None else compArrays["thn"] + arr
+                )
+            elif "Fast" in vol_name:
+                compArrays["fast"] = (
+                    arr if compArrays["fast"] is None else compArrays["fast"] + arr
+                )
+            elif "Gamma" in vol_name or "photon" in vol_name.lower():
+                compArrays["gamma"] = (
+                    arr if compArrays["gamma"] is None else compArrays["gamma"] + arr
+                )
         logic = BNCTLogic()
         try:
             qt.QApplication.setOverrideCursor(qt.Qt.WaitCursor)
             logic.calculateIsoEffectveDose(
-                comp_arrays=compArrays, params=paramsArr, bratio=bratio,
-                tir=self.factorTIR.value, scale=self.scaleFactor.value,
-                origin=nodes[0].GetOrigin(), spacing=nodes[0].GetSpacing())
+                comp_arrays=compArrays,
+                params=paramsArr,
+                bratio=bratio,
+                tir=self.factorTIR.value,
+                scale=self.scaleFactor.value,
+                origin=nodes[0].GetOrigin(),
+                spacing=nodes[0].GetSpacing(),
+            )
             slicer.util.infoDisplay("Dosis Isoefectiva calculada correctamente.")
         except Exception as e:
             slicer.util.errorDisplay(f"Error: {str(e)}")
             import traceback
+
             logging.error(traceback.format_exc())
         finally:
             qt.QApplication.restoreOverrideCursor()
@@ -1618,7 +1991,9 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
         for i in range(self.dvhScrollLayout.count()):
             w = self.dvhScrollLayout.itemAt(i).widget()
             if isinstance(w, qt.QCheckBox):
-                w.blockSignals(True); w.checked = checked; w.blockSignals(False)
+                w.blockSignals(True)
+                w.checked = checked
+                w.blockSignals(False)
 
     def _populateDvhCheckboxes(self, config):
         while self.dvhScrollLayout.count():
@@ -1630,15 +2005,17 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
             cb = qt.QCheckBox(f"{row['name']}  [mesh {int(row['nmesh'])}]")
             cb.checked = True
             self.dvhScrollLayout.addWidget(cb)
-        self.dvhTodosCheck.blockSignals(True); self.dvhTodosCheck.checked = True; self.dvhTodosCheck.blockSignals(False)
+        self.dvhTodosCheck.blockSignals(True)
+        self.dvhTodosCheck.checked = True
+        self.dvhTodosCheck.blockSignals(False)
 
     def _onDvhDoseTypeChanged(self, idx):
-        self.dvhModeloCombo.visible = (idx == 2)
+        self.dvhModeloCombo.visible = idx == 2
 
     def _loadModels(self):
         if os.path.exists(_MODELS_PATH):
             try:
-                return load_jsonc(_MODELS_PATH).get('isoeffective', [])
+                return load_jsonc(_MODELS_PATH).get("isoeffective", [])
             except Exception as e:
                 logging.warning(f"No se pudo cargar models.jsonc: {e}")
         return []
@@ -1647,7 +2024,7 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
         if os.path.exists(_ORGAN_CONFIG_PATH):
             try:
                 data = load_jsonc(_ORGAN_CONFIG_PATH)
-                config = data.get('rois', [])
+                config = data.get("rois", [])
                 if config:
                     self._populateDvhCheckboxes(config)
                     return config
@@ -1660,8 +2037,8 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
                 d = os.path.dirname(_ORGAN_CONFIG_PATH)
                 if not os.path.exists(d):
                     os.makedirs(d)
-                with open(_ORGAN_CONFIG_PATH, 'w', encoding='utf-8') as f:
-                    json.dump({'rois': config}, f, indent=2, ensure_ascii=False)
+                with open(_ORGAN_CONFIG_PATH, "w", encoding="utf-8") as f:
+                    json.dump({"rois": config}, f, indent=2, ensure_ascii=False)
                 self._populateDvhCheckboxes(config)
                 return config
             except Exception as e:
@@ -1688,9 +2065,22 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
                 slicer.util.errorDisplay("Seleccione un modelo.")
                 return
             m = self._dvh_models[midx]
-            model_params = [m['alpha_r'], m['beta_r'], m['alpha_boro'], m['beta_boro'],
-                            m['alpha_thn'], m['beta_thn'], m['alpha_fast'], m['beta_fast'],
-                            m['tof'], m['tos'], m['pf_g'], m['ps_g'], m['pf_bnct'], m['ps_bnct']]
+            model_params = [
+                m["alpha_r"],
+                m["beta_r"],
+                m["alpha_boro"],
+                m["beta_boro"],
+                m["alpha_thn"],
+                m["beta_thn"],
+                m["alpha_fast"],
+                m["beta_fast"],
+                m["tof"],
+                m["tos"],
+                m["pf_g"],
+                m["ps_g"],
+                m["pf_bnct"],
+                m["ps_bnct"],
+            ]
         mask_node = self.maskVolumeSelector.currentNode()
         if not mask_node:
             slicer.util.errorDisplay("Seleccione un volumen de mascara.")
@@ -1698,12 +2088,18 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
         logic = BNCTLogic()
         try:
             qt.QApplication.setOverrideCursor(qt.Qt.WaitCursor)
-            logic.calculateDVH(organs=selected, dose_type=dose_type,
-                               b10_conc=b10, tir=tir,
-                               model_params=model_params, mask_volume=mask_node)
+            logic.calculateDVH(
+                organs=selected,
+                dose_type=dose_type,
+                b10_conc=b10,
+                tir=tir,
+                model_params=model_params,
+                mask_volume=mask_node,
+            )
         except Exception as e:
             slicer.util.errorDisplay(f"Error en DVH: {str(e)}")
             import traceback
+
             logging.error(traceback.format_exc())
             _log(f"ERROR: {e}\n{traceback.format_exc()}")
         finally:
@@ -1734,12 +2130,17 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
             self.dvhLayout.addWidget(lbl)
             return
         self._utcp_models_all = self._loadModelsAll()
-        self.dvhLayout.addWidget(qt.QLabel("UTCP — TCP / NTCP / UTCP multi-órgano (Gy IsoE):"))
+        self.dvhLayout.addWidget(
+            qt.QLabel("UTCP — TCP / NTCP / UTCP multi-órgano (Gy IsoE):")
+        )
         self.utcpTable = qt.QTableWidget(0, 5)
         self.utcpTable.setHorizontalHeaderLabels(
-            ["ROI", "Tipo", "Modelo IsoE", "Modelo NTCP", "Incluir UTCP"])
+            ["ROI", "Tipo", "Modelo IsoE", "Modelo NTCP", "Incluir UTCP"]
+        )
         try:
-            self.utcpTable.horizontalHeader().setSectionResizeMode(qt.QHeaderView.Stretch)
+            self.utcpTable.horizontalHeader().setSectionResizeMode(
+                qt.QHeaderView.Stretch
+            )
         except Exception:
             pass
         self.utcpTable.setMinimumHeight(180)
@@ -1750,19 +2151,19 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
         rowBtns.addWidget(self.utcpCalcBtn)
         rowBtns.addWidget(self.utcpOptBtn)
         self.dvhLayout.addLayout(rowBtns)
-        self.utcpCalcBtn.connect('clicked(bool)', self.onUTCPCompute)
-        self.utcpOptBtn.connect('clicked(bool)', self.onUTCPOptimize)
+        self.utcpCalcBtn.connect("clicked(bool)", self.onUTCPCompute)
+        self.utcpOptBtn.connect("clicked(bool)", self.onUTCPOptimize)
         self._utcpPopulateTable()
 
     def _utcpPopulateTable(self):
         config = self._dvh_config or []
-        iso_models = self._utcp_models_all.get('isoeffective', [])
+        iso_models = self._utcp_models_all.get("isoeffective", [])
         ntcp_models = self._utcpNtcpCatalog()
         self.utcpTable.blockSignals(True)
         self.utcpTable.setRowCount(len(config))
         for i, row in enumerate(config):
-            is_tumor = bool(row.get('tumor'))
-            name_item = qt.QTableWidgetItem(str(row.get('name', '')))
+            is_tumor = bool(row.get("tumor"))
+            name_item = qt.QTableWidgetItem(str(row.get("name", "")))
             name_item.setFlags(name_item.flags() & ~qt.Qt.ItemIsEditable)
             self.utcpTable.setItem(i, 0, name_item)
             tipo = "Tumor (TCP Provenzano)" if is_tumor else "OAR"
@@ -1774,10 +2175,10 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
             for m in iso_models:
                 combo_iso.addItem(f"{m['id']}. {m['name']}")
             default_iso = default_isoe_model_for_roi(
-                str(row.get('name', '')), is_tumor,
-                [m['name'] for m in iso_models])
+                str(row.get("name", "")), is_tumor, [m["name"] for m in iso_models]
+            )
             for j, m in enumerate(iso_models):
-                if m['name'] == default_iso:
+                if m["name"] == default_iso:
                     combo_iso.setCurrentIndex(j)
                     break
             self.utcpTable.setCellWidget(i, 2, combo_iso)
@@ -1787,53 +2188,59 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
                 ntcp_item.setFlags(ntcp_item.flags() & ~qt.Qt.ItemIsEditable)
                 self.utcpTable.setItem(i, 3, ntcp_item)
                 inc = qt.QTableWidgetItem()
-                inc.setFlags(inc.flags() & ~qt.Qt.ItemIsUserCheckable
-                             & ~qt.Qt.ItemIsEnabled)
+                inc.setFlags(
+                    inc.flags() & ~qt.Qt.ItemIsUserCheckable & ~qt.Qt.ItemIsEnabled
+                )
                 self.utcpTable.setItem(i, 4, inc)
             else:
                 combo_ntcp = qt.QComboBox()
                 for nm in ntcp_models:
-                    if nm.get('kind') == 'riback':
+                    if nm.get("kind") == "riback":
                         tag = " (no disponible)"
-                    elif nm.get('provisional_para'):
+                    elif nm.get("provisional_para"):
                         tag = " (PROVISIONAL fuera de su endpoint)"
                     else:
                         tag = ""
-                    combo_ntcp.addItem(nm.get('name', 'LKB') + tag)
+                    combo_ntcp.addItem(nm.get("name", "LKB") + tag)
                 combo_ntcp.insertItem(0, "(excluir de NTCP)")
-                saved = row.get('utcp_ntcp_model')
+                saved = row.get("utcp_ntcp_model")
                 if saved:
                     for j, nm in enumerate(ntcp_models):
-                        if nm.get('name') == saved:
+                        if nm.get("name") == saved:
                             combo_ntcp.setCurrentIndex(j + 1)
                             break
                 self.utcpTable.setCellWidget(i, 3, combo_ntcp)
                 inc = qt.QTableWidgetItem("Incluir")
                 inc.setFlags(inc.flags() | qt.Qt.ItemIsUserCheckable)
                 inc.setCheckState(
-                    qt.Qt.Checked if row.get('utcp_include') else qt.Qt.Unchecked)
+                    qt.Qt.Checked if row.get("utcp_include") else qt.Qt.Unchecked
+                )
                 self.utcpTable.setItem(i, 4, inc)
         self.utcpTable.blockSignals(False)
 
     def _utcpResolveTumor(self, config):
         """Resuelve la ROI tumoral por flag (nunca por indice)."""
-        tumors = [r for r in config if r.get('tumor')]
+        tumors = [r for r in config if r.get("tumor")]
         if not tumors:
             slicer.util.errorDisplay(
                 "No hay ROI marcada como tumor en Dosimetry (columna Tumor). "
-                "Marque exactamente una ROI tumoral para calcular TCP/UTCP.")
+                "Marque exactamente una ROI tumoral para calcular TCP/UTCP."
+            )
             return None
         if len(tumors) > 1:
-            names = [r.get('name', '?') for r in tumors]
+            names = [r.get("name", "?") for r in tumors]
             sel, ok = qt.QInputDialog.getItem(
                 slicer.util.mainWindow(),
                 "Multiple ROI tumorales",
                 "Hay %d ROIs marcadas como tumor (%s). Seleccione la tumoral "
                 "para TCP:" % (len(tumors), ", ".join(names)),
-                names, 0, False)
+                names,
+                0,
+                False,
+            )
             if not ok:
                 return None
-            return next(r for r in tumors if r.get('name') == sel)
+            return next(r for r in tumors if r.get("name") == sel)
         return tumors[0]
 
     def _utcpPersistSelection(self):
@@ -1842,9 +2249,9 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
             data = {}
             if os.path.exists(_ORGAN_CONFIG_PATH):
                 data = load_jsonc(_ORGAN_CONFIG_PATH)
-            rois = data.get('rois', [])
-            by_name = {r.get('name'): r for r in rois}
-            for i in range(self.utcpTable.rowCount()):
+            rois = data.get("rois", [])
+            by_name = {r.get("name"): r for r in rois}
+            for i in range(self.utcpTable.rowCount):
                 item = self.utcpTable.item(i, 0)
                 if item is None:
                     continue
@@ -1853,33 +2260,50 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
                 if r is None:
                     continue
                 combo_iso = self.utcpTable.cellWidget(i, 2)
-                iso_models = self._utcp_models_all.get('isoeffective', [])
-                if combo_iso is not None and 0 <= combo_iso.currentIndex < len(iso_models):
-                    r['utcp_isoe_model'] = iso_models[combo_iso.currentIndex]['name']
+                iso_models = self._utcp_models_all.get("isoeffective", [])
+                if combo_iso is not None and 0 <= combo_iso.currentIndex < len(
+                    iso_models
+                ):
+                    r["utcp_isoe_model"] = iso_models[combo_iso.currentIndex]["name"]
                 combo_ntcp = self.utcpTable.cellWidget(i, 3)
                 if combo_ntcp is not None:
                     ntcp_models = self._utcpNtcpCatalog()
                     idx = combo_ntcp.currentIndex - 1
-                    r['utcp_ntcp_model'] = (ntcp_models[idx].get('name')
-                                            if 0 <= idx < len(ntcp_models) else None)
+                    r["utcp_ntcp_model"] = (
+                        ntcp_models[idx].get("name")
+                        if 0 <= idx < len(ntcp_models)
+                        else None
+                    )
                 inc = self.utcpTable.item(i, 4)
                 if inc is not None and (inc.flags() & qt.Qt.ItemIsUserCheckable):
-                    r['utcp_include'] = (inc.checkState() == qt.Qt.Checked)
+                    r["utcp_include"] = inc.checkState() == qt.Qt.Checked
             d = os.path.dirname(_ORGAN_CONFIG_PATH)
             if not os.path.exists(d):
                 os.makedirs(d)
-            with open(_ORGAN_CONFIG_PATH, 'w', encoding='utf-8') as f:
+            with open(_ORGAN_CONFIG_PATH, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
         except Exception as e:
             logging.warning(f"No se pudo persistir seleccion UTCP: {e}")
 
     def _utcpIsoParams14(self, model_name):
-        for m in self._utcp_models_all.get('isoeffective', []):
-            if m['name'] == model_name:
-                return [m['alpha_r'], m['beta_r'], m['alpha_boro'], m['beta_boro'],
-                        m['alpha_thn'], m['beta_thn'], m['alpha_fast'],
-                        m['beta_fast'], m['tof'], m['tos'], m['pf_g'],
-                        m['ps_g'], m['pf_bnct'], m['ps_bnct']]
+        for m in self._utcp_models_all.get("isoeffective", []):
+            if m["name"] == model_name:
+                return [
+                    m["alpha_r"],
+                    m["beta_r"],
+                    m["alpha_boro"],
+                    m["beta_boro"],
+                    m["alpha_thn"],
+                    m["beta_thn"],
+                    m["alpha_fast"],
+                    m["beta_fast"],
+                    m["tof"],
+                    m["tos"],
+                    m["pf_g"],
+                    m["ps_g"],
+                    m["pf_bnct"],
+                    m["ps_bnct"],
+                ]
         raise ValueError("Modelo isoefectivo no encontrado: %r" % model_name)
 
     def _utcpCollectComps(self, meshes, mask_node):
@@ -1892,26 +2316,36 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
             if not volumes:
                 raise ValueError(
                     "No hay componentes KERMA para mesh %d. Calcule la "
-                    "dosimetria (pestaña Dosimetry) antes de correr UTCP." % nmesh)
-            comps = {'boro': None, 'thn': None, 'fast': None, 'gamma': None}
+                    "dosimetria (pestaña Dosimetry) antes de correr UTCP." % nmesh
+                )
+            comps = {"boro": None, "thn": None, "fast": None, "gamma": None}
             for node, vol_name in volumes:
                 arr = slicer.util.arrayFromVolume(node).astype(np.float64)
                 if arr.shape != ref_shape:
                     from scipy.ndimage import zoom
+
                     factors = [r / a for r, a in zip(ref_shape, arr.shape)]
                     arr = zoom(arr, factors, order=1)
-                if 'Boron' in vol_name or 'boro' in vol_name.lower():
-                    comps['boro'] = arr if comps['boro'] is None else comps['boro'] + arr
-                elif 'Thermal' in vol_name or 'thn' in vol_name.lower():
-                    comps['thn'] = arr if comps['thn'] is None else comps['thn'] + arr
-                elif 'Fast' in vol_name:
-                    comps['fast'] = arr if comps['fast'] is None else comps['fast'] + arr
-                elif 'Gamma' in vol_name or 'photon' in vol_name.lower():
-                    comps['gamma'] = arr if comps['gamma'] is None else comps['gamma'] + arr
+                if "Boron" in vol_name or "boro" in vol_name.lower():
+                    comps["boro"] = (
+                        arr if comps["boro"] is None else comps["boro"] + arr
+                    )
+                elif "Thermal" in vol_name or "thn" in vol_name.lower():
+                    comps["thn"] = arr if comps["thn"] is None else comps["thn"] + arr
+                elif "Fast" in vol_name:
+                    comps["fast"] = (
+                        arr if comps["fast"] is None else comps["fast"] + arr
+                    )
+                elif "Gamma" in vol_name or "photon" in vol_name.lower():
+                    comps["gamma"] = (
+                        arr if comps["gamma"] is None else comps["gamma"] + arr
+                    )
             missing = [k for k, v in comps.items() if v is None]
             if missing:
-                raise ValueError("Mesh %d sin componentes: %s. No se sustituyen "
-                                 "por otras distribuciones." % (nmesh, ", ".join(missing)))
+                raise ValueError(
+                    "Mesh %d sin componentes: %s. No se sustituyen "
+                    "por otras distribuciones." % (nmesh, ", ".join(missing))
+                )
             comps_map[int(nmesh)] = comps
         return comps_map
 
@@ -1924,46 +2358,55 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
             return None
         mask_node = self.maskVolumeSelector.currentNode()
         if not mask_node:
-            slicer.util.errorDisplay("Seleccione un volumen de mascara (Mascaras_Combinadas_Gris).")
+            slicer.util.errorDisplay(
+                "Seleccione un volumen de mascara (Mascaras_Combinadas_Gris)."
+            )
             return None
         spacing = mask_node.GetSpacing()
         voxel_cc = float(spacing[0]) * float(spacing[1]) * float(spacing[2]) / 1000.0
         mask_arr = np.array(slicer.util.arrayFromVolume(mask_node))
-        iso_models = self._utcp_models_all.get('isoeffective', [])
+        iso_models = self._utcp_models_all.get("isoeffective", [])
         ntcp_models = self._utcpNtcpCatalog()
 
         def vol_of(row):
-            m = (mask_arr == int(row.get('gray_level', 0)))
+            m = mask_arr == int(row.get("gray_level", 0))
             return float(m.sum()) * voxel_cc, m
 
         vol_t, mask_t = vol_of(tumor_row)
         if vol_t <= 0:
             slicer.util.errorDisplay(
                 "La mascara tumoral '%s' esta vacia (gray_level %s)."
-                % (tumor_row.get('name'), tumor_row.get('gray_level')))
+                % (tumor_row.get("name"), tumor_row.get("gray_level"))
+            )
             return None
-        iso_name = tumor_row.get('utcp_isoe_model') or \
-            default_isoe_model_for_roi(str(tumor_row.get('name', '')), True,
-                                       [m['name'] for m in iso_models])
+        iso_name = tumor_row.get("utcp_isoe_model") or default_isoe_model_for_roi(
+            str(tumor_row.get("name", "")), True, [m["name"] for m in iso_models]
+        )
         tumor = {
-            'name': tumor_row.get('name', 'TUMOR'), 'mesh': int(tumor_row.get('nmesh', 1) or 1),
-            'mask': mask_t, 'volume_cc': vol_t,
-            'bratio': float(tumor_row.get('ratio', 1.0) or 1.0),
-            'isoe_params14': self._utcpIsoParams14(iso_name),
-            'tcp_params': (builtin_tcp_models(
-                self._utcp_models_all.get('tcp', [])) or [None])[0],
+            "name": tumor_row.get("name", "TUMOR"),
+            "mesh": int(tumor_row.get("nmesh", 1) or 1),
+            "mask": mask_t,
+            "volume_cc": vol_t,
+            "bratio": float(tumor_row.get("ratio", 1.0) or 1.0),
+            "isoe_params14": self._utcpIsoParams14(iso_name),
+            "tcp_params": (
+                builtin_tcp_models(self._utcp_models_all.get("tcp", [])) or [None]
+            )[0],
         }
         oars = []
-        for i in range(self.utcpTable.rowCount()):
+        for i in range(self.utcpTable.rowCount):
             item = self.utcpTable.item(i, 0)
             if item is None:
                 continue
-            row = next((r for r in config if r.get('name') == item.text()), None)
-            if row is None or row.get('tumor'):
+            row = next((r for r in config if r.get("name") == item.text()), None)
+            if row is None or row.get("tumor"):
                 continue
             inc = self.utcpTable.item(i, 4)
-            include = bool(inc and (inc.flags() & qt.Qt.ItemIsUserCheckable)
-                           and inc.checkState() == qt.Qt.Checked)
+            include = bool(
+                inc
+                and (inc.flags() & qt.Qt.ItemIsUserCheckable)
+                and inc.checkState() == qt.Qt.Checked
+            )
             if not include:
                 continue
             combo_ntcp = self.utcpTable.cellWidget(i, 3)
@@ -1972,80 +2415,116 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
                 continue
             nm = dict(ntcp_models[idx])
             vol_o, mask_o = vol_of(row)
-            iso_name = row.get('utcp_isoe_model') or \
-                default_isoe_model_for_roi(str(row.get('name', '')), False,
-                                           [m['name'] for m in iso_models])
-            oars.append({
-                'name': row.get('name', '?'), 'mesh': int(row.get('nmesh', 1) or 1),
-                'mask': mask_o, 'volume_cc': vol_o,
-                'bratio': float(row.get('ratio', 1.0) or 1.0),
-                'isoe_params14': self._utcpIsoParams14(iso_name),
-                'ntcp_params': nm, 'include': True,
-                'provisional': bool(nm.get('provisional') or nm.get('provisional_para')),
-            })
+            iso_name = row.get("utcp_isoe_model") or default_isoe_model_for_roi(
+                str(row.get("name", "")), False, [m["name"] for m in iso_models]
+            )
+            oars.append(
+                {
+                    "name": row.get("name", "?"),
+                    "mesh": int(row.get("nmesh", 1) or 1),
+                    "mask": mask_o,
+                    "volume_cc": vol_o,
+                    "bratio": float(row.get("ratio", 1.0) or 1.0),
+                    "isoe_params14": self._utcpIsoParams14(iso_name),
+                    "ntcp_params": nm,
+                    "include": True,
+                    "provisional": bool(
+                        nm.get("provisional") or nm.get("provisional_para")
+                    ),
+                }
+            )
         if not oars:
             slicer.util.messageBox(
-                "No hay OARs incluidos en el producto UTCP: UTCP = TCP.",
-                "UTCP")
+                "No hay OARs incluidos en el producto UTCP: UTCP = TCP.", "UTCP"
+            )
         b10 = self.dvhB10Spin.value
         tir = self.dvhTirSpin.value
-        meshes = {tumor['mesh']} | {o['mesh'] for o in oars}
+        meshes = {tumor["mesh"]} | {o["mesh"] for o in oars}
         try:
             comps_map = self._utcpCollectComps(meshes, mask_node)
         except ValueError as e:
             slicer.util.errorDisplay(str(e))
             return None
-        return {'tumor': tumor, 'oars': oars, 'comps_map': comps_map,
-                'b10': float(b10), 'tir': float(tir)}
+        return {
+            "tumor": tumor,
+            "oars": oars,
+            "comps_map": comps_map,
+            "b10": float(b10),
+            "tir": float(tir),
+        }
 
     def onUTCPCompute(self):
         if _UTCP_IMPORT_ERROR:
-            slicer.util.errorDisplay("Motor UTCP no disponible: %s" % _UTCP_IMPORT_ERROR)
+            slicer.util.errorDisplay(
+                "Motor UTCP no disponible: %s" % _UTCP_IMPORT_ERROR
+            )
             return
         inputs = self._utcpBuildInputs()
         if inputs is None:
             return
         try:
             qt.QApplication.setOverrideCursor(qt.Qt.WaitCursor)
-            res = compute_utcp_point(inputs['comps_map'], inputs['tumor'],
-                                     inputs['oars'], inputs['tir'], inputs['b10'])
+            res = compute_utcp_point(
+                inputs["comps_map"],
+                inputs["tumor"],
+                inputs["oars"],
+                inputs["tir"],
+                inputs["b10"],
+            )
         except Exception as e:
             slicer.util.errorDisplay(f"Error en UTCP: {str(e)}")
             import traceback
+
             logging.error(traceback.format_exc())
             return
         finally:
             qt.QApplication.restoreOverrideCursor()
-        lines = [f"t = {res['tir']:.2f} min,  B-10 = {inputs['b10']:.1f} ppm",
-                 f"TCP  = {res['tcp']:.4f}",
-                 f"UTCP = {res['utcp']:.4f}",
-                 f"({res['assumption']})", ""]
-        for name, info in res['ntcp'].items():
-            if info.get('ntcp') is None:
-                lines.append(f"NTCP {name}: excluido ({info.get('error', 'no incluido')})")
+        lines = [
+            f"t = {res['tir']:.2f} min,  B-10 = {inputs['b10']:.1f} ppm",
+            f"TCP  = {res['tcp']:.4f}",
+            f"UTCP = {res['utcp']:.4f}",
+            f"({res['assumption']})",
+            "",
+        ]
+        for name, info in res["ntcp"].items():
+            if info.get("ntcp") is None:
+                lines.append(
+                    f"NTCP {name}: excluido ({info.get('error', 'no incluido')})"
+                )
             else:
-                lines.append(f"NTCP {name} [{info.get('model', 'LKB')}] = "
-                             f"{info['ntcp']:.4f}  (Dref = {info.get('dref_gy', float('nan')):.2f} Gy IsoE)")
-        for w in res['warnings']:
+                lines.append(
+                    f"NTCP {name} [{info.get('model', 'LKB')}] = "
+                    f"{info['ntcp']:.4f}  (Dref = {info.get('dref_gy', float('nan')):.2f} Gy IsoE)"
+                )
+        for w in res["warnings"]:
             lines.append(f"[AVISO] {w}")
         slicer.util.messageBox("\n".join(lines), "Resultado UTCP")
 
     def onUTCPOptimize(self):
         if _UTCP_IMPORT_ERROR:
-            slicer.util.errorDisplay("Motor UTCP no disponible: %s" % _UTCP_IMPORT_ERROR)
+            slicer.util.errorDisplay(
+                "Motor UTCP no disponible: %s" % _UTCP_IMPORT_ERROR
+            )
             return
         inputs = self._utcpBuildInputs()
         if inputs is None:
             return
-        t_max = max(inputs['tir'], 1.0)
+        t_max = max(inputs["tir"], 1.0)
         tvals = np.linspace(1.0, t_max, 40)
         try:
             qt.QApplication.setOverrideCursor(qt.Qt.WaitCursor)
-            res = sweep_utcp(inputs['comps_map'], tvals[0], inputs['tumor'],
-                             inputs['oars'], tvals, inputs['b10'])
+            res = sweep_utcp(
+                inputs["comps_map"],
+                tvals[0],
+                inputs["tumor"],
+                inputs["oars"],
+                tvals,
+                inputs["b10"],
+            )
         except Exception as e:
             slicer.util.errorDisplay(f"Error en barrido UTCP: {str(e)}")
             import traceback
+
             logging.error(traceback.format_exc())
             return
         finally:
@@ -2055,34 +2534,41 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
             self._utcpPlotSweep(res, inputs)
         except Exception as e:
             logging.warning(f"No se pudo graficar barrido UTCP: {e}")
-        feasible = (f"\nMaximo factible con restricciones: t = {res['t_feasible']:.2f} min, "
-                    f"UTCP = {res['utcp_feasible_max']:.4f}"
-                    if res['t_feasible'] is not None else
-                    "\n(Sin restricciones dosimetricas configuradas)")
+        feasible = (
+            f"\nMaximo factible con restricciones: t = {res['t_feasible']:.2f} min, "
+            f"UTCP = {res['utcp_feasible_max']:.4f}"
+            if res["t_feasible"] is not None
+            else "\n(Sin restricciones dosimetricas configuradas)"
+        )
         slicer.util.messageBox(
             f"Tiempo optimo (sin restricciones): t = {res['t_opt']:.2f} min\n"
             f"UTCP maximo = {res['utcp_max']:.4f}\n"
             f"TCP en t_opt = {res['tcp'][int(np.nanargmax(res['utcp']))]:.4f}"
             f"{feasible}\n\nCurvas guardadas en tabla/grafico 'UTCP'.",
-            "Optimizacion de tiempo de irradiacion")
+            "Optimizacion de tiempo de irradiacion",
+        )
 
     def _utcpPlotSweep(self, res, inputs):
         table = slicer.mrmlScene.GetFirstNodeByName("Table_UTCP")
         if table is None:
             table = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLTableNode", "Table_UTCP")
         table.RemoveAllColumns()
+
         def col(name, values):
             c = table.AddColumn()
             c.SetName(name)
             c.SetValues([float(v) for v in values])
-        col("tir_min", res['tir_values'])
-        col("TCP", res['tcp'])
-        col("UTCP", res['utcp'])
-        for name, curve in res['ntcp'].items():
+
+        col("tir_min", res["tir_values"])
+        col("TCP", res["tcp"])
+        col("UTCP", res["utcp"])
+        for name, curve in res["ntcp"].items():
             col(f"NTCP_{name}", curve)
         plot = slicer.mrmlScene.GetFirstNodeByName("Chart_UTCP")
         if plot is None:
-            plot = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotChartNode", "Chart_UTCP")
+            plot = slicer.mrmlScene.AddNewNodeByClass(
+                "vtkMRMLPlotChartNode", "Chart_UTCP"
+            )
         # limpiar series previas del chart
         sn = slicer.mrmlScene.GetNodesByClass("vtkMRMLPlotSeriesNode")
         for i in range(sn.GetNumberOfItems()):
@@ -2090,7 +2576,9 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
             if s.GetChartNodeID() == plot.GetID():
                 slicer.mrmlScene.RemoveNode(s)
         for cname, title in (("TCP", "TCP"), ("UTCP", "UTCP")):
-            s = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotSeriesNode", f"Plot_UTCP_{title}")
+            s = slicer.mrmlScene.AddNewNodeByClass(
+                "vtkMRMLPlotSeriesNode", f"Plot_UTCP_{title}"
+            )
             s.SetAndObserveTableNodeID(table.GetID())
             s.SetXColumnName("tir_min")
             s.SetYColumnName(cname)
@@ -2105,38 +2593,42 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
     # ------------------------------------------------------------------
     def _masksGetConfig(self):
         """Devuelve la config de ROIs: usa la cargada en la pestana Dosimetry o relee el .mat."""
-        config = getattr(self, '_organ_config', None)
+        config = getattr(self, "_organ_config", None)
         if config:
             return config
         return BNCTLogic().loadConfigFromMat(_MAT_PATH)
 
     def _masksFillTable(self, result):
         """Rellena la tabla de resultados con el dict devuelto por la logica."""
-        rows = result.get('rows', [])
+        rows = result.get("rows", [])
         self.masksTable.setRowCount(len(rows))
         for i, row in enumerate(rows):
-            self.masksTable.setItem(i, 0, qt.QTableWidgetItem(str(row['name'])))
-            self.masksTable.setItem(i, 1, qt.QTableWidgetItem(str(row['gray_level'])))
-            self.masksTable.setItem(i, 2, qt.QTableWidgetItem(str(row['nmesh'])))
-            self.masksTable.setItem(i, 3, qt.QTableWidgetItem(str(row['nvox'])))
-            estado = row['estado']
+            self.masksTable.setItem(i, 0, qt.QTableWidgetItem(str(row["name"])))
+            self.masksTable.setItem(i, 1, qt.QTableWidgetItem(str(row["gray_level"])))
+            self.masksTable.setItem(i, 2, qt.QTableWidgetItem(str(row["nmesh"])))
+            self.masksTable.setItem(i, 3, qt.QTableWidgetItem(str(row["nvox"])))
+            estado = row["estado"]
             item = qt.QTableWidgetItem(estado)
-            if estado != 'OK':
+            if estado != "OK":
                 item.setForeground(qt.QBrush(qt.QColor(200, 30, 30)))
             self.masksTable.setItem(i, 4, item)
 
     def onGenerateMasks(self):
         """Genera los labelmaps por ROI y verifica superposicion."""
         import traceback
+
         try:
             node = self.structureSelector.currentNode()
             if node is None:
-                slicer.util.errorDisplay("Selecciona un nodo de segmentacion o un volumen de estructura.")
+                slicer.util.errorDisplay(
+                    "Selecciona un nodo de segmentacion o un volumen de estructura."
+                )
                 return
             config = self._masksGetConfig()
             logic = BNCTLogic()
             result = logic.generateMasks(
-                node, config,
+                node,
+                config,
                 createIndividual=self.chkMasksIndividual.checked,
                 createCombined=self.chkMasksCombined.checked,
                 skipEmpty=self.chkMasksSkipEmpty.checked,
@@ -2145,23 +2637,26 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
             self._masksFillTable(result)
             self.masksReportText.plainText = logic.buildReport(result)
             try:
-                if result.get('combined_gray_node') is not None:
-                    self.voxelMaskSelector.setCurrentNode(result['combined_gray_node'])
+                if result.get("combined_gray_node") is not None:
+                    self.voxelMaskSelector.setCurrentNode(result["combined_gray_node"])
                 # Solo refrescar si hay una mascara gris seleccionada: si se genero
                 # sin combinado, el selector puede haber quedado vacio y
                 # onLoadVoxelLevels mostraria un error innecesario.
                 if self.voxelMaskSelector.currentNode() is not None:
                     self.onLoadVoxelLevels()
             except Exception:
-                _log("onGenerateMasks: no se pudo refrescar el tab Voxelizado:\n"
-                     + traceback.format_exc())
+                _log(
+                    "onGenerateMasks: no se pudo refrescar el tab Voxelizado:\n"
+                    + traceback.format_exc()
+                )
             slicer.util.infoDisplay(
                 f"Mascaras generadas: {len(result.get('individual_nodes', []))} individuales\n"
                 f"Segmentos procesados: {result.get('n_segments', 0)} / {len(result.get('rows', []))} filas\n"
                 f"Voxeles con superposicion: {result.get('overlap_voxels', 0)}\n"
                 f"Sin ROI en la config: {len(result.get('sin_config', []))}\n"
                 f"Vacios: {len(result.get('empty_rois', []))}",
-                windowTitle="Mascaras BNCT")
+                windowTitle="Mascaras BNCT",
+            )
         except Exception:
             _log("Error en onGenerateMasks:\n" + traceback.format_exc())
             slicer.util.errorDisplay("Error generando mascaras. Ver _bnct_debug.txt.")
@@ -2169,31 +2664,43 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
     def onVerifyOverlap(self):
         """Verifica superposicion sin crear volumenes."""
         import traceback
+
         try:
             node = self.structureSelector.currentNode()
             if node is None:
-                slicer.util.errorDisplay("Selecciona un nodo de segmentacion o un volumen de estructura.")
+                slicer.util.errorDisplay(
+                    "Selecciona un nodo de segmentacion o un volumen de estructura."
+                )
                 return
             logic = BNCTLogic()
             result = logic.checkOverlap(
-                node, self._masksGetConfig(),
-                referenceNode=self.segReferenceSelector.currentNode())
+                node,
+                self._masksGetConfig(),
+                referenceNode=self.segReferenceSelector.currentNode(),
+            )
             self._masksFillTable(result)
             report = logic.buildReport(result)
             self.masksReportText.plainText = report
             slicer.util.infoDisplay(report, windowTitle="Verificacion de Superposicion")
         except Exception:
             _log("Error en onVerifyOverlap:\n" + traceback.format_exc())
-            slicer.util.errorDisplay("Error verificando superposicion. Ver _bnct_debug.txt.")
+            slicer.util.errorDisplay(
+                "Error verificando superposicion. Ver _bnct_debug.txt."
+            )
 
     def onCleanupMasks(self):
         """Borra los labelmaps generados."""
         import traceback
+
         try:
             removed = BNCTLogic().cleanupMasks()
             self.masksTable.setRowCount(0)
-            self.masksReportText.plainText = f"Se eliminaron {removed} labelmaps de mascaras."
-            slicer.util.infoDisplay(f"Se eliminaron {removed} labelmaps.", windowTitle="Limpiar Mascaras")
+            self.masksReportText.plainText = (
+                f"Se eliminaron {removed} labelmaps de mascaras."
+            )
+            slicer.util.infoDisplay(
+                f"Se eliminaron {removed} labelmaps.", windowTitle="Limpiar Mascaras"
+            )
         except Exception:
             _log("Error en onCleanupMasks:\n" + traceback.format_exc())
             slicer.util.errorDisplay("Error limpiando mascaras. Ver _bnct_debug.txt.")
@@ -2203,15 +2710,16 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
 # BNCTLogic - Logica compartida para Dosimetry y DVH Analysis
 #
 
-class BNCTLogic(ScriptedLoadableModuleLogic):
 
+class BNCTLogic(ScriptedLoadableModuleLogic):
     @staticmethod
     def load_jsonc(path):
         """Carga un archivo JSONC (JSON con comentarios // y /* */)."""
         import re
+
         with open(path) as f:
             text = f.read()
-        text = re.sub(r'//.*?\n|/\*.*?\*/', '', text, flags=re.S)
+        text = re.sub(r"//.*?\n|/\*.*?\*/", "", text, flags=re.S)
         return json.loads(text)
 
     def loadModels(self):
@@ -2236,9 +2744,9 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
                 obj = cell
             data = obj[()]
             if isinstance(data, bytes):
-                return data.decode('latin-1')
-            if isinstance(data, np.ndarray) and data.dtype.kind == 'u':
-                return ''.join(chr(int(c)) for c in data.ravel())
+                return data.decode("latin-1")
+            if isinstance(data, np.ndarray) and data.dtype.kind == "u":
+                return "".join(chr(int(c)) for c in data.ravel())
             if isinstance(data, np.ndarray):
                 arr = data.ravel()
                 return arr[0] if len(arr) == 1 else arr
@@ -2249,31 +2757,40 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
         def read_rbe(rbe_group):
             if isinstance(rbe_group, h5py.Group):
                 return {
-                    'rbe_boron': float(read_ref(rbe_group['boron'][0, 0])),
-                    'rbe_fast': float(read_ref(rbe_group['fast_neutron'][0, 0])),
-                    'rbe_thermal': float(read_ref(rbe_group['nitrogen'][0, 0])),
-                    'rbe_gamma': float(read_ref(rbe_group['photon'][0, 0])),
+                    "rbe_boron": float(read_ref(rbe_group["boron"][0, 0])),
+                    "rbe_fast": float(read_ref(rbe_group["fast_neutron"][0, 0])),
+                    "rbe_thermal": float(read_ref(rbe_group["nitrogen"][0, 0])),
+                    "rbe_gamma": float(read_ref(rbe_group["photon"][0, 0])),
                 }
-            return {'rbe_boron': 1.3, 'rbe_fast': 3.2, 'rbe_thermal': 3.2, 'rbe_gamma': 1.0}
+            return {
+                "rbe_boron": 1.3,
+                "rbe_fast": 3.2,
+                "rbe_thermal": 3.2,
+                "rbe_gamma": 1.0,
+            }
 
-        with h5py.File(path, 'r') as f:
-            info = f['info_dvh_cnea']
-            num_rows = len(info['nroi'])
+        with h5py.File(path, "r") as f:
+            info = f["info_dvh_cnea"]
+            num_rows = len(info["nroi"])
             for i in range(num_rows):
-                rbe_grp = info['RBE'][i, 0]
-                rbe_vals = read_rbe(rbe_grp) if isinstance(rbe_grp, h5py.Group) else read_rbe(rbe_grp)
+                rbe_grp = info["RBE"][i, 0]
+                rbe_vals = (
+                    read_rbe(rbe_grp)
+                    if isinstance(rbe_grp, h5py.Group)
+                    else read_rbe(rbe_grp)
+                )
                 row = {
-                    'nroi': int(float(read_ref(info['nroi'][i, 0]))),
-                    'nmesh': int(float(read_ref(info['nmesh'][i, 0]))),
-                    'name': str(read_ref(info['roi_name'][i, 0])),
-                    'rbe_boron': float(rbe_vals['rbe_boron']),
-                    'rbe_fast': float(rbe_vals['rbe_fast']),
-                    'rbe_thermal': float(rbe_vals['rbe_thermal']),
-                    'rbe_gamma': float(rbe_vals['rbe_gamma']),
-                    'ratio': float(read_ref(info['ratio'][i, 0])),
-                    'tir': float(read_ref(info['tir'][i, 0])),
-                    'tumor': bool(int(float(read_ref(info['tumor'][i, 0])))),
-                    'gray_level': int(float(read_ref(info['gray_level'][i, 0]))),
+                    "nroi": int(float(read_ref(info["nroi"][i, 0]))),
+                    "nmesh": int(float(read_ref(info["nmesh"][i, 0]))),
+                    "name": str(read_ref(info["roi_name"][i, 0])),
+                    "rbe_boron": float(rbe_vals["rbe_boron"]),
+                    "rbe_fast": float(rbe_vals["rbe_fast"]),
+                    "rbe_thermal": float(rbe_vals["rbe_thermal"]),
+                    "rbe_gamma": float(rbe_vals["rbe_gamma"]),
+                    "ratio": float(read_ref(info["ratio"][i, 0])),
+                    "tir": float(read_ref(info["tir"][i, 0])),
+                    "tumor": bool(int(float(read_ref(info["tumor"][i, 0])))),
+                    "gray_level": int(float(read_ref(info["gray_level"][i, 0]))),
                 }
                 config.append(row)
         return config
@@ -2287,48 +2804,57 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
             import h5py
         import numpy as np
         from datetime import datetime
+
         n = len(config)
-        with h5py.File(path, 'w') as f:
-            grp = f.create_group('info_dvh_cnea')
-            for key in ['nroi', 'nmesh', 'gray_level', 'tumor']:
-                grp.create_dataset(key, (n, 1), dtype='i4')
-            for key in ['ratio', 'tir', 'Gy2MU', 'vol', 'Unit']:
-                grp.create_dataset(key, (n, 1), dtype='f8')
-            for key in ['roi_name', 'fecha', 'X', 'Y']:
+        with h5py.File(path, "w") as f:
+            grp = f.create_group("info_dvh_cnea")
+            for key in ["nroi", "nmesh", "gray_level", "tumor"]:
+                grp.create_dataset(key, (n, 1), dtype="i4")
+            for key in ["ratio", "tir", "Gy2MU", "vol", "Unit"]:
+                grp.create_dataset(key, (n, 1), dtype="f8")
+            for key in ["roi_name", "fecha", "X", "Y"]:
                 grp.create_dataset(key, (n, 1), dtype=h5py.string_dtype())
-            for key in ['Max', 'Mean', 'Min']:
-                grp.create_dataset(key, (n, 1), dtype='f8')
+            for key in ["Max", "Mean", "Min"]:
+                grp.create_dataset(key, (n, 1), dtype="f8")
             for i, row in enumerate(config):
-                grp['nroi'][i, 0] = row.get('nroi', i + 1)
-                grp['nmesh'][i, 0] = row.get('nmesh', 1)
-                grp['gray_level'][i, 0] = row.get('gray_level', 0)
-                grp['tumor'][i, 0] = 1 if row.get('tumor', False) else 0
-                grp['ratio'][i, 0] = row.get('ratio', 1.0)
-                grp['tir'][i, 0] = row.get('tir', 20.0)
-                grp['Gy2MU'][i, 0] = 0.0
-                grp['vol'][i, 0] = 0.0
-                grp['Unit'][i, 0] = 1.0
-                grp['roi_name'][i, 0] = str(row.get('name', f'ROI_{i + 1}'))
-                grp['fecha'][i, 0] = datetime.now().strftime('%d-%b-%Y')
-                grp['X'][i, 0] = ''
-                grp['Y'][i, 0] = ''
-                grp['Max'][i, 0] = 0.0
-                grp['Mean'][i, 0] = 0.0
-                grp['Min'][i, 0] = 0.0
+                grp["nroi"][i, 0] = row.get("nroi", i + 1)
+                grp["nmesh"][i, 0] = row.get("nmesh", 1)
+                grp["gray_level"][i, 0] = row.get("gray_level", 0)
+                grp["tumor"][i, 0] = 1 if row.get("tumor", False) else 0
+                grp["ratio"][i, 0] = row.get("ratio", 1.0)
+                grp["tir"][i, 0] = row.get("tir", 20.0)
+                grp["Gy2MU"][i, 0] = 0.0
+                grp["vol"][i, 0] = 0.0
+                grp["Unit"][i, 0] = 1.0
+                grp["roi_name"][i, 0] = str(row.get("name", f"ROI_{i + 1}"))
+                grp["fecha"][i, 0] = datetime.now().strftime("%d-%b-%Y")
+                grp["X"][i, 0] = ""
+                grp["Y"][i, 0] = ""
+                grp["Max"][i, 0] = 0.0
+                grp["Mean"][i, 0] = 0.0
+                grp["Min"][i, 0] = 0.0
             rbe_dt = h5py.special_dtype(ref=h5py.Reference)
-            rbe_dataset = grp.create_dataset('RBE', (n, 1), dtype=rbe_dt)
+            rbe_dataset = grp.create_dataset("RBE", (n, 1), dtype=rbe_dt)
             for i in range(n):
-                rbe_name = chr(65 + i) if i < 26 else f'rbe_{i}'
-                rbe_grp = grp.create_group(f'#{rbe_name}')
-                rbe_grp.create_dataset('boron', data=float(config[i].get('rbe_boron', 1.3)))
-                rbe_grp.create_dataset('fast_neutron', data=float(config[i].get('rbe_fast', 3.2)))
-                rbe_grp.create_dataset('nitrogen', data=float(config[i].get('rbe_thermal', 3.2)))
-                rbe_grp.create_dataset('photon', data=float(config[i].get('rbe_gamma', 1.0)))
+                rbe_name = chr(65 + i) if i < 26 else f"rbe_{i}"
+                rbe_grp = grp.create_group(f"#{rbe_name}")
+                rbe_grp.create_dataset(
+                    "boron", data=float(config[i].get("rbe_boron", 1.3))
+                )
+                rbe_grp.create_dataset(
+                    "fast_neutron", data=float(config[i].get("rbe_fast", 3.2))
+                )
+                rbe_grp.create_dataset(
+                    "nitrogen", data=float(config[i].get("rbe_thermal", 3.2))
+                )
+                rbe_grp.create_dataset(
+                    "photon", data=float(config[i].get("rbe_gamma", 1.0))
+                )
                 rbe_dataset[i, 0] = rbe_grp.ref
 
     def saveConfigToJson(self, path, config):
         """Guarda configuracion en JSON plano."""
-        with open(path, 'w', encoding='utf-8') as f:
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2, ensure_ascii=False)
 
     def run(self, neutron_files, gamma_path, refNode, rbe_factors, suffix=""):
@@ -2337,14 +2863,18 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
 
         if not neutron_files:
             if not suffix:
-                slicer.util.errorDisplay("No se encontraron archivos mesh-N.out (neutrones) en la carpeta.")
+                slicer.util.errorDisplay(
+                    "No se encontraron archivos mesh-N.out (neutrones) en la carpeta."
+                )
             return
 
         print(f"--- Archivos PHITS encontrados (suffix='{suffix}') ---")
         print(f"  KERMA ({len(neutron_files)}):")
         for f in neutron_files:
             print(f"    - {os.path.basename(f)}")
-        print(f"  Gamma: {os.path.basename(gamma_path) if gamma_path else 'No encontrado'}")
+        print(
+            f"  Gamma: {os.path.basename(gamma_path) if gamma_path else 'No encontrado'}"
+        )
 
         final_origin = None
         final_spacing = None
@@ -2354,27 +2884,35 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
 
             n_data = self.parsePHITS(npath)
 
-            if n_data['particle'] != 'neutron':
-                logging.warning(f"  Saltando {os.path.basename(npath)}: partícula={n_data['particle']}")
+            if n_data["particle"] != "neutron":
+                logging.warning(
+                    f"  Saltando {os.path.basename(npath)}: partícula={n_data['particle']}"
+                )
                 continue
 
             if final_origin is None and not refNode:
-                final_origin = n_data['origin']
-                final_spacing = n_data['spacing']
+                final_origin = n_data["origin"]
+                final_spacing = n_data["spacing"]
 
             if refNode:
-                n_data['user_offset'] = rbe_factors['offset']
-                for j in range(len(n_data['data'])):
-                    n_data['data'][j] = self.interpolateDose(n_data['data'][j], n_data, refNode)
+                n_data["user_offset"] = rbe_factors["offset"]
+                for j in range(len(n_data["data"])):
+                    n_data["data"][j] = self.interpolateDose(
+                        n_data["data"][j], n_data, refNode
+                    )
                 final_origin = refNode.GetOrigin()
                 final_spacing = refNode.GetSpacing()
 
-            print(f"Field {i}: final_origin={final_origin}, final_spacing={final_spacing}")
+            print(
+                f"Field {i}: final_origin={final_origin}, final_spacing={final_spacing}"
+            )
 
             comp_names = ["Boron", "FastNeutron", "ThermalNeutron"]
             for j, comp in enumerate(comp_names):
                 vol_name = f"{comp}_Kerma{i}{suffix}"
-                self.createDoseVolume(n_data['data'][j], final_origin, final_spacing, vol_name)
+                self.createDoseVolume(
+                    n_data["data"][j], final_origin, final_spacing, vol_name
+                )
 
         has_gamma = False
         gamma_name = "Gamma_Photon"
@@ -2385,23 +2923,33 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
             g_data = self.parsePHITS(gamma_path)
 
             if refNode:
-                g_data['user_offset'] = rbe_factors['offset']
-                g_data['data'][0] = self.interpolateDose(g_data['data'][0], g_data, refNode)
+                g_data["user_offset"] = rbe_factors["offset"]
+                g_data["data"][0] = self.interpolateDose(
+                    g_data["data"][0], g_data, refNode
+                )
                 final_origin = refNode.GetOrigin()
                 final_spacing = refNode.GetSpacing()
-                print(f"Gamma: final_origin={final_origin}, final_spacing={final_spacing}")
+                print(
+                    f"Gamma: final_origin={final_origin}, final_spacing={final_spacing}"
+                )
 
-            self.createDoseVolume(g_data['data'][0], final_origin, final_spacing, gamma_name)
+            self.createDoseVolume(
+                g_data["data"][0], final_origin, final_spacing, gamma_name
+            )
             has_gamma = True
         else:
             if not suffix:
-                logging.warning("No se encontró archivo gamma. Solo se cargarán campos de neutrones.")
+                logging.warning(
+                    "No se encontró archivo gamma. Solo se cargarán campos de neutrones."
+                )
 
         self._organizeInSubjectHierarchy(len(neutron_files), has_gamma)
 
         print(f"--- Carga completa (suffix='{suffix}') ---")
         print(f"  KERMA components: {len(neutron_files)}")
-        print(f"  Volúmenes creados: {len(neutron_files) * 3 + (1 if has_gamma else 0)}")
+        print(
+            f"  Volúmenes creados: {len(neutron_files) * 3 + (1 if has_gamma else 0)}"
+        )
         logging.info("Proceso multicampo finalizado.")
 
     def _getKermaVolumeNames(self):
@@ -2432,10 +2980,18 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
         return total
 
     def _isBoronComponent(self, name):
-        return 'Boron' in name or 'boro' in name.lower()
+        return "Boron" in name or "boro" in name.lower()
 
-    def calculatePhysicalDose(self, nodes, b10_conc=15.0, ratio_tb=3.5, tir=1.0, scale=1.0,
-                               peso1=1.0, peso2=1.0):
+    def calculatePhysicalDose(
+        self,
+        nodes,
+        b10_conc=15.0,
+        ratio_tb=3.5,
+        tir=1.0,
+        scale=1.0,
+        peso1=1.0,
+        peso2=1.0,
+    ):
         """Dosis Física = suma de componentes KERMA seleccionados con B10*ratio."""
         if not nodes:
             raise ValueError("No hay volúmenes KERMA seleccionados.")
@@ -2445,7 +3001,7 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
             arr = slicer.util.arrayFromVolume(node).astype(np.float64)
             if self._isBoronComponent(node.GetName()):
                 arr = arr * b10_conc * ratio_tb
-            if '_C2' in node.GetName():
+            if "_C2" in node.GetName():
                 arr *= peso2
             else:
                 arr *= peso1
@@ -2459,8 +3015,17 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
 
         print(f"Dosis Física: max={np.max(phys_dose):.4f}, min={np.min(phys_dose):.4f}")
 
-    def calculateRBEDose(self, nodes, rbe_values, b10_conc=15.0, ratio_tb=3.5, tir=1.0, scale=1.0,
-                          peso1=1.0, peso2=1.0):
+    def calculateRBEDose(
+        self,
+        nodes,
+        rbe_values,
+        b10_conc=15.0,
+        ratio_tb=3.5,
+        tir=1.0,
+        scale=1.0,
+        peso1=1.0,
+        peso2=1.0,
+    ):
         """Dosis RBE = suma de componentes KERMA ponderados por RBE."""
         if not nodes:
             raise ValueError("No hay volúmenes KERMA seleccionados.")
@@ -2472,7 +3037,7 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
             arr = slicer.util.arrayFromVolume(node).astype(np.float64)
             if self._isBoronComponent(node.GetName()):
                 arr = arr * b10_conc * ratio_tb
-            if '_C2' in node.GetName():
+            if "_C2" in node.GetName():
                 arr *= peso2
             else:
                 arr *= peso1
@@ -2494,10 +3059,18 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
         Gs = 2 * xs * (1 - xs * (1 - np.exp(-1 / xs)))
         return Gs - (pf * Gf + ps * Gs - ps * Gf)
 
-    def calculateIsoEffectveDose(self, comp_arrays, params, bratio, tir=1.0,
-                                   scale=1.0, origin=(0, 0, 0), spacing=(1, 1, 1)):
+    def calculateIsoEffectveDose(
+        self,
+        comp_arrays,
+        params,
+        bratio,
+        tir=1.0,
+        scale=1.0,
+        origin=(0, 0, 0),
+        spacing=(1, 1, 1),
+    ):
         """Dosis Isoefectiva = modelo LQ con Lea-Catcheside."""
-        if comp_arrays['boro'] is None:
+        if comp_arrays["boro"] is None:
             raise ValueError("Componente Boron no encontrado.")
 
         alpha_r, beta_r = params[0], params[1]
@@ -2520,14 +3093,26 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
         Gf = 2 * xf * (1 - xf * (1 - np.exp(-1 / np.maximum(xf, 1e-10))))
         Gs = 2 * xs * (1 - xs * (1 - np.exp(-1 / np.maximum(xs, 1e-10))))
 
-        D_boro = comp_arrays['boro'] * bratio
-        D_thn = comp_arrays['thn'] if comp_arrays['thn'] is not None else np.zeros_like(D_boro)
-        D_fast = comp_arrays['fast'] if comp_arrays['fast'] is not None else np.zeros_like(D_boro)
-        D_g = comp_arrays['gamma'] if comp_arrays['gamma'] is not None else np.zeros_like(D_boro)
+        D_boro = comp_arrays["boro"] * bratio
+        D_thn = (
+            comp_arrays["thn"]
+            if comp_arrays["thn"] is not None
+            else np.zeros_like(D_boro)
+        )
+        D_fast = (
+            comp_arrays["fast"]
+            if comp_arrays["fast"] is not None
+            else np.zeros_like(D_boro)
+        )
+        D_g = (
+            comp_arrays["gamma"]
+            if comp_arrays["gamma"] is not None
+            else np.zeros_like(D_boro)
+        )
 
         Dt = D_boro + D_thn + D_fast + D_g
 
-        with np.errstate(divide='ignore', invalid='ignore'):
+        with np.errstate(divide="ignore", invalid="ignore"):
             fb = np.divide(D_boro, Dt, out=np.zeros_like(Dt), where=Dt > 0)
             fn = np.divide(D_thn + D_fast, Dt, out=np.zeros_like(Dt), where=Dt > 0)
             fg = np.divide(D_g, Dt, out=np.zeros_like(Dt), where=Dt > 0)
@@ -2552,23 +3137,29 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
         G_23 = Gs - (a_23 * pf_bnct + a_32 * pf_g) * (Gs - Gf)
         G_31 = Gs - (a_31 * pf_g + a_13 * pf_bnct) * (Gs - Gf)
 
-        D_lineal = (alpha[0] * D_boro + alpha[1] * D_thn +
-                    alpha[2] * D_fast + alpha[3] * D_g) * tir
+        D_lineal = (
+            alpha[0] * D_boro + alpha[1] * D_thn + alpha[2] * D_fast + alpha[3] * D_g
+        ) * tir
 
-        D_cuad = (G_11 * beta_mat[0] * D_boro ** 2 +
-                  G_22 * beta_mat[1] * D_thn ** 2 +
-                  G_22 * beta_mat[2] * D_fast ** 2 +
-                  G_33 * beta_mat[3] * D_g ** 2 +
-                  2 * G_12 * np.sqrt(beta_mat[0] * beta_mat[1]) * D_boro * D_thn +
-                  2 * G_12 * np.sqrt(beta_mat[0] * beta_mat[2]) * D_boro * D_fast +
-                  2 * G_31 * np.sqrt(beta_mat[0] * beta_mat[3]) * D_boro * D_g +
-                  2 * G_11 * np.sqrt(beta_mat[1] * beta_mat[2]) * D_thn * D_fast +
-                  2 * G_23 * np.sqrt(beta_mat[1] * beta_mat[3]) * D_thn * D_g +
-                  2 * G_23 * np.sqrt(beta_mat[2] * beta_mat[3]) * D_fast * D_g) * tir ** 2
+        D_cuad = (
+            G_11 * beta_mat[0] * D_boro**2
+            + G_22 * beta_mat[1] * D_thn**2
+            + G_22 * beta_mat[2] * D_fast**2
+            + G_33 * beta_mat[3] * D_g**2
+            + 2 * G_12 * np.sqrt(beta_mat[0] * beta_mat[1]) * D_boro * D_thn
+            + 2 * G_12 * np.sqrt(beta_mat[0] * beta_mat[2]) * D_boro * D_fast
+            + 2 * G_31 * np.sqrt(beta_mat[0] * beta_mat[3]) * D_boro * D_g
+            + 2 * G_11 * np.sqrt(beta_mat[1] * beta_mat[2]) * D_thn * D_fast
+            + 2 * G_23 * np.sqrt(beta_mat[1] * beta_mat[3]) * D_thn * D_g
+            + 2 * G_23 * np.sqrt(beta_mat[2] * beta_mat[3]) * D_fast * D_g
+        ) * tir**2
 
-        DisoE = 0.5 * (alphabeta_r / Gr) * (
-            np.sqrt(1 + 4 * Gr * beta_r / alpha_r ** 2 * (D_lineal + D_cuad)) - 1
-        ) * scale
+        DisoE = (
+            0.5
+            * (alphabeta_r / Gr)
+            * (np.sqrt(1 + 4 * Gr * beta_r / alpha_r**2 * (D_lineal + D_cuad)) - 1)
+            * scale
+        )
 
         DisoE = np.nan_to_num(DisoE)
 
@@ -2584,8 +3175,8 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
             from scipy.interpolate import RegularGridInterpolator
 
         nz, ny, nx = dose_array.shape
-        ox, oy, oz = source_data['origin']
-        sx, sy, sz = source_data['spacing']
+        ox, oy, oz = source_data["origin"]
+        sx, sy, sz = source_data["spacing"]
 
         x_src = ox + np.arange(nx) * sx
         y_src = oy + np.arange(ny) * sy
@@ -2594,7 +3185,7 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
         t_dims = target_node.GetImageData().GetDimensions()
         t_origin = target_node.GetOrigin()
         t_spacing = target_node.GetSpacing()
-        ox_off, oy_off, oz_off = source_data.get('user_offset', (0, 0, 0))
+        ox_off, oy_off, oz_off = source_data.get("user_offset", (0, 0, 0))
 
         print(f"--- INTERPOLACIÓN BNCT ---")
         print(f"PHITS Grid Centers Bounds:")
@@ -2607,12 +3198,17 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
         print(f"  Spacing: {t_spacing}")
         print(f"  Offset (user): ({ox_off:.2f}, {oy_off:.2f}, {oz_off:.2f})")
 
-        interp = RegularGridInterpolator((z_src, y_src, x_src), dose_array,
-                                        method='linear', bounds_error=False, fill_value=np.nan)
+        interp = RegularGridInterpolator(
+            (z_src, y_src, x_src),
+            dose_array,
+            method="linear",
+            bounds_error=False,
+            fill_value=np.nan,
+        )
 
         i_1d = np.arange(t_dims[0])
         j_1d = np.arange(t_dims[1])
-        jj, ii = np.meshgrid(j_1d, i_1d, indexing='ij')
+        jj, ii = np.meshgrid(j_1d, i_1d, indexing="ij")
 
         mat = vtk.vtkMatrix4x4()
         target_node.GetIJKToRASMatrix(mat)
@@ -2621,8 +3217,9 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
         d_interp = np.zeros((t_dims[2], t_dims[1], t_dims[0]))
 
         for k_idx in range(t_dims[2]):
-            pts_ijk = np.vstack([ii.ravel(), jj.ravel(),
-                                  np.full(ii.size, k_idx), np.ones(ii.size)])
+            pts_ijk = np.vstack(
+                [ii.ravel(), jj.ravel(), np.full(ii.size, k_idx), np.ones(ii.size)]
+            )
             pts_ras = m_np @ pts_ijk
 
             x_pts = pts_ras[0, :] - ox_off
@@ -2644,15 +3241,23 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
         """Parser real de PHITS (Traducido de f_lectura_phits_neutron.m)."""
         logging.info(f"Analizando archivo: {path}")
 
-        with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
             lines = f.readlines()
 
         params = {}
         patterns = {
-            'xmin': r'xmin\s*=\s*([\d\.\-\+eE]+)', 'xmax': r'xmax\s*=\s*([\d\.\-\+eE]+)', 'xdel': r'xdel\s*=\s*([\d\.\-\+eE]+)',
-            'ymin': r'ymin\s*=\s*([\d\.\-\+eE]+)', 'ymax': r'ymax\s*=\s*([\d\.\-\+eE]+)', 'ydel': r'ydel\s*=\s*([\d\.\-\+eE]+)',
-            'zmin': r'zmin\s*=\s*([\d\.\-\+eE]+)', 'zmax': r'zmax\s*=\s*([\d\.\-\+eE]+)', 'zdel': r'zdel\s*=\s*([\d\.\-\+eE]+)',
-            'nx': r'nx\s*=\s*(\d+)', 'ny': r'ny\s*=\s*(\d+)', 'nz': r'nz\s*=\s*(\d+)'
+            "xmin": r"xmin\s*=\s*([\d\.\-\+eE]+)",
+            "xmax": r"xmax\s*=\s*([\d\.\-\+eE]+)",
+            "xdel": r"xdel\s*=\s*([\d\.\-\+eE]+)",
+            "ymin": r"ymin\s*=\s*([\d\.\-\+eE]+)",
+            "ymax": r"ymax\s*=\s*([\d\.\-\+eE]+)",
+            "ydel": r"ydel\s*=\s*([\d\.\-\+eE]+)",
+            "zmin": r"zmin\s*=\s*([\d\.\-\+eE]+)",
+            "zmax": r"zmax\s*=\s*([\d\.\-\+eE]+)",
+            "zdel": r"zdel\s*=\s*([\d\.\-\+eE]+)",
+            "nx": r"nx\s*=\s*(\d+)",
+            "ny": r"ny\s*=\s*(\d+)",
+            "nz": r"nz\s*=\s*(\d+)",
         }
 
         for line in lines:
@@ -2662,27 +3267,33 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
                     if match:
                         params[key] = float(match.group(1))
 
-        nx, ny, nz = int(params['nx']), int(params['ny']), int(params['nz'])
-        spacing = (params['xdel'] * 10.0, params['ydel'] * 10.0, params['zdel'] * 10.0)
+        nx, ny, nz = int(params["nx"]), int(params["ny"]), int(params["nz"])
+        spacing = (params["xdel"] * 10.0, params["ydel"] * 10.0, params["zdel"] * 10.0)
         origin = (
-            (params['xmin'] + params['xdel'] / 2.0) * 10.0,
-            (params['ymin'] + params['ydel'] / 2.0) * 10.0,
-            (params['zmin'] + params['zdel'] / 2.0) * 10.0
+            (params["xmin"] + params["xdel"] / 2.0) * 10.0,
+            (params["ymin"] + params["ydel"] / 2.0) * 10.0,
+            (params["zmin"] + params["zdel"] / 2.0) * 10.0,
         )
 
-        particle = 'unknown'
+        particle = "unknown"
         for line in lines:
-            m = re.search(r'^\s*part\s*=\s*(\w+)', line)
+            m = re.search(r"^\s*part\s*=\s*(\w+)", line)
             if m:
                 particle = m.group(1).lower()
                 break
 
-        newpage_indices = [i for i, line in enumerate(lines) if 'newpage:' in line.lower()]
+        newpage_indices = [
+            i for i, line in enumerate(lines) if "newpage:" in line.lower()
+        ]
         if not newpage_indices:
-            newpage_indices = [i for i, line in enumerate(lines) if 'hc' in line.lower()]
+            newpage_indices = [
+                i for i, line in enumerate(lines) if "hc" in line.lower()
+            ]
 
         if not newpage_indices:
-            raise ValueError("No se encontraron bloques de datos (newpage/hc) en el archivo.")
+            raise ValueError(
+                "No se encontraron bloques de datos (newpage/hc) en el archivo."
+            )
 
         total_pages = len(newpage_indices)
         num_msets = total_pages // nz
@@ -2692,6 +3303,7 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
             num_msets = 1
 
         import math
+
         m_matlab = int(math.ceil(nx * ny / 10.0))
         m1 = m_matlab - 1
 
@@ -2699,8 +3311,8 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
 
         def robust_float(s):
             try:
-                s_clean = s.replace('f', '.').replace('d', 'e').replace('D', 'e')
-                s_clean = re.sub(r'(\d)([\+\-])(\d)', r'\1E\2\3', s_clean)
+                s_clean = s.replace("f", ".").replace("d", "e").replace("D", "e")
+                s_clean = re.sub(r"(\d)([\+\-])(\d)", r"\1E\2\3", s_clean)
                 return float(s_clean)
             except:
                 return 0.0
@@ -2717,9 +3329,11 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
                 idx = newpage_indices[page_idx]
 
                 salto = 1
-                if 'newpage:' in lines[idx].lower():
+                if "newpage:" in lines[idx].lower():
                     for offset in range(1, 50):
-                        if (idx + offset) < len(lines) and 'hc:' in lines[idx + offset].lower():
+                        if (idx + offset) < len(lines) and "hc:" in lines[
+                            idx + offset
+                        ].lower():
                             salto = offset + 1
                             break
                     else:
@@ -2744,11 +3358,11 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
             msets_data.append(mset_array)
 
         return {
-            'data': msets_data,
-            'origin': origin,
-            'spacing': spacing,
-            'shape': (nz, ny, nx),
-            'particle': particle
+            "data": msets_data,
+            "origin": origin,
+            "spacing": spacing,
+            "shape": (nz, ny, nx),
+            "particle": particle,
         }
 
     def createDoseVolume(self, array, origin, spacing, name):
@@ -2770,23 +3384,29 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
         displayNode = volumeNode.GetDisplayNode()
 
         if displayNode:
-            rainbowColorNode = slicer.mrmlScene.GetNodeByID("vtkMRMLColorTableNodeFileRainbow.txt")
+            rainbowColorNode = slicer.mrmlScene.GetNodeByID(
+                "vtkMRMLColorTableNodeFileRainbow.txt"
+            )
             if not rainbowColorNode:
                 rainbowColorNode = slicer.util.getNode("Rainbow")
 
             if rainbowColorNode:
                 colorNodeID = rainbowColorNode.GetID()
-                if hasattr(displayNode, 'SetAndObserveColorNodeID'):
+                if hasattr(displayNode, "SetAndObserveColorNodeID"):
                     displayNode.SetAndObserveColorNodeID(colorNodeID)
-                elif hasattr(displayNode, 'SetAndUseColorNodeID'):
+                elif hasattr(displayNode, "SetAndUseColorNodeID"):
                     displayNode.SetAndUseColorNodeID(colorNodeID)
-                elif hasattr(displayNode, 'SetColorNodeID'):
+                elif hasattr(displayNode, "SetColorNodeID"):
                     displayNode.SetColorNodeID(colorNodeID)
             else:
-                logging.warning(f"No se pudo encontrar la escala de colores Rainbow para {name}")
+                logging.warning(
+                    f"No se pudo encontrar la escala de colores Rainbow para {name}"
+                )
 
             displayNode.AutoWindowLevelOn()
-            displayNode.SetThreshold(np.max(array) * 0.01 if np.max(array) > 0 else 0, np.max(array))
+            displayNode.SetThreshold(
+                np.max(array) * 0.01 if np.max(array) > 0 else 0, np.max(array)
+            )
             displayNode.SetApplyThreshold(True)
 
         slicer.util.setSliceViewerLayers(background=volumeNode, fit=True)
@@ -2796,10 +3416,18 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
 
     def _cleanupOldVolumes(self):
         prefixes = [
-            "Boron_Kerma", "FastNeutron_Kerma", "ThermalNeutron_Kerma",
-            "Gamma_Photon", "Raw_Boro_PHITS", "Raw_Fast_PHITS",
-            "Raw_Thermal_PHITS", "Raw_Gamma_PHITS", "Dosis_Final_BNCT",
-            "Dosis_Fisica_BNCT", "Dosis_RBE_BNCT", "Dosis_IsoE_BNCT"
+            "Boron_Kerma",
+            "FastNeutron_Kerma",
+            "ThermalNeutron_Kerma",
+            "Gamma_Photon",
+            "Raw_Boro_PHITS",
+            "Raw_Fast_PHITS",
+            "Raw_Thermal_PHITS",
+            "Raw_Gamma_PHITS",
+            "Dosis_Final_BNCT",
+            "Dosis_Fisica_BNCT",
+            "Dosis_RBE_BNCT",
+            "Dosis_IsoE_BNCT",
         ]
         node_col = slicer.mrmlScene.GetNodesByClass("vtkMRMLScalarVolumeNode")
         for i in range(node_col.GetNumberOfItems()):
@@ -2808,7 +3436,9 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
                 slicer.mrmlScene.RemoveNode(node)
 
     def _organizeInSubjectHierarchy(self, field_count, has_gamma):
-        shNode = slicer.vtkMRMLSubjectHierarchyNode.GetSubjectHierarchyNode(slicer.mrmlScene)
+        shNode = slicer.vtkMRMLSubjectHierarchyNode.GetSubjectHierarchyNode(
+            slicer.mrmlScene
+        )
         if not shNode:
             return
         sceneId = shNode.GetSceneItemID()
@@ -2843,34 +3473,51 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
                 if item_id:
                     shNode.SetItemParent(item_id, gammaId)
 
-    def _calcDoseForMesh(self, nmesh, dose_type, b10, tir, ratio,
-                          rbe_b, rbe_f, rbe_t, rbe_g, model_params):
+    def _calcDoseForMesh(
+        self,
+        nmesh,
+        dose_type,
+        b10,
+        tir,
+        ratio,
+        rbe_b,
+        rbe_f,
+        rbe_t,
+        rbe_g,
+        model_params,
+    ):
         volumes = self._getKermaVolumesForMesh(nmesh)
         if not volumes:
             return None
-        comp = {'boro': None, 'fast': None, 'thermal': None, 'gamma': None}
+        comp = {"boro": None, "fast": None, "thermal": None, "gamma": None}
         for node, vol_name in volumes:
             arr = slicer.util.arrayFromVolume(node).astype(np.float64)
-            if 'Boron' in vol_name or 'boro' in vol_name.lower():
-                comp['boro'] = arr if comp['boro'] is None else comp['boro'] + arr
-            elif 'Fast' in vol_name:
-                comp['fast'] = arr if comp['fast'] is None else comp['fast'] + arr
-            elif 'Thermal' in vol_name or 'thn' in vol_name.lower():
-                comp['thermal'] = arr if comp['thermal'] is None else comp['thermal'] + arr
-            elif 'Gamma' in vol_name or 'photon' in vol_name.lower():
-                comp['gamma'] = arr if comp['gamma'] is None else comp['gamma'] + arr
-        if comp['boro'] is None:
+            if "Boron" in vol_name or "boro" in vol_name.lower():
+                comp["boro"] = arr if comp["boro"] is None else comp["boro"] + arr
+            elif "Fast" in vol_name:
+                comp["fast"] = arr if comp["fast"] is None else comp["fast"] + arr
+            elif "Thermal" in vol_name or "thn" in vol_name.lower():
+                comp["thermal"] = (
+                    arr if comp["thermal"] is None else comp["thermal"] + arr
+                )
+            elif "Gamma" in vol_name or "photon" in vol_name.lower():
+                comp["gamma"] = arr if comp["gamma"] is None else comp["gamma"] + arr
+        if comp["boro"] is None:
             return None
         if dose_type == "Dosis Fisica":
-            return ((comp['boro'] * b10 * ratio +
-                     (comp['fast'] if comp['fast'] is not None else 0) +
-                     (comp['thermal'] if comp['thermal'] is not None else 0) +
-                     (comp['gamma'] if comp['gamma'] is not None else 0)) * tir)
+            return (
+                comp["boro"] * b10 * ratio
+                + (comp["fast"] if comp["fast"] is not None else 0)
+                + (comp["thermal"] if comp["thermal"] is not None else 0)
+                + (comp["gamma"] if comp["gamma"] is not None else 0)
+            ) * tir
         elif dose_type == "Dosis RBE":
-            return ((comp['boro'] * b10 * ratio * rbe_b +
-                     (comp['fast'] if comp['fast'] is not None else 0) * rbe_f +
-                     (comp['thermal'] if comp['thermal'] is not None else 0) * rbe_t +
-                     (comp['gamma'] if comp['gamma'] is not None else 0) * rbe_g) * tir)
+            return (
+                comp["boro"] * b10 * ratio * rbe_b
+                + (comp["fast"] if comp["fast"] is not None else 0) * rbe_f
+                + (comp["thermal"] if comp["thermal"] is not None else 0) * rbe_t
+                + (comp["gamma"] if comp["gamma"] is not None else 0) * rbe_g
+            ) * tir
         elif dose_type == "Dosis Isoefectiva" and model_params is not None:
             return self._calcIsoDose(comp, model_params, ratio, tir)
         return None
@@ -2884,25 +3531,29 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
         pf_g, ps_g = model_params[10], model_params[11]
         pf_bnct, ps_bnct = model_params[12], model_params[13]
         alphabeta_r = alpha_r / beta_r if beta_r != 0 else 1e10
-        D_boro = comp['boro'] * ratio
-        D_thn = comp['thermal'] if comp['thermal'] is not None else np.zeros_like(D_boro)
-        D_fast = comp['fast'] if comp['fast'] is not None else np.zeros_like(D_boro)
-        D_g = comp['gamma'] if comp['gamma'] is not None else np.zeros_like(D_boro)
+        D_boro = comp["boro"] * ratio
+        D_thn = (
+            comp["thermal"] if comp["thermal"] is not None else np.zeros_like(D_boro)
+        )
+        D_fast = comp["fast"] if comp["fast"] is not None else np.zeros_like(D_boro)
+        D_g = comp["gamma"] if comp["gamma"] is not None else np.zeros_like(D_boro)
         Dt = D_boro + D_thn + D_fast + D_g
-        with np.errstate(divide='ignore', invalid='ignore'):
+        with np.errstate(divide="ignore", invalid="ignore"):
             fb = np.divide(D_boro, Dt, out=np.zeros_like(Dt), where=Dt > 0)
             fn = np.divide(D_thn + D_fast, Dt, out=np.zeros_like(Dt), where=Dt > 0)
             fg = np.divide(D_g, Dt, out=np.zeros_like(Dt), where=Dt > 0)
+
         def lc_g(tof, tos, pf, ps, t):
             xf, xs = tof / t, tos / t
             Gf = 2 * xf * (1 - xf * (1 - np.exp(-1 / max(xf, 1e-10))))
             Gs = 2 * xs * (1 - xs * (1 - np.exp(-1 / max(xs, 1e-10))))
             return Gs - (pf * Gf + ps * Gs - ps * Gf)
+
         Gr = lc_g(tof, tos, pf_g, 1 - pf_g, 30.0)
         G_11 = lc_g(tof, tos, pf_bnct, ps_bnct, tir)
         G_22 = G_11
         G_33 = lc_g(tof, tos, pf_g, ps_g, tir)
-        with np.errstate(divide='ignore', invalid='ignore'):
+        with np.errstate(divide="ignore", invalid="ignore"):
             a_12 = np.divide(fb, fb + fn, out=np.zeros_like(fb), where=(fb + fn) > 0)
             a_21 = np.divide(fn, fb + fn, out=np.zeros_like(fn), where=(fb + fn) > 0)
             a_13 = np.divide(fb, fb + fg, out=np.zeros_like(fb), where=(fb + fg) > 0)
@@ -2912,23 +3563,36 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
         G_12 = lc_g(tof, tos, a_12 * pf_bnct + a_21 * pf_bnct, 0, tir)
         G_23 = lc_g(tof, tos, a_23 * pf_bnct + a_32 * pf_g, 0, tir)
         G_31 = lc_g(tof, tos, a_31 * pf_g + a_13 * pf_bnct, 0, tir)
-        D_lineal = (alpha_boro * D_boro + alpha_thn * D_thn +
-                    alpha_fast * D_fast + alpha_r * D_g) * tir
-        D_cuad = (G_11 * beta_boro * D_boro ** 2 + G_22 * beta_thn * D_thn ** 2 +
-                  G_22 * beta_fast * D_fast ** 2 + G_33 * beta_r * D_g ** 2 +
-                  2 * G_12 * np.sqrt(beta_boro * beta_thn) * D_boro * D_thn +
-                  2 * G_12 * np.sqrt(beta_boro * beta_fast) * D_boro * D_fast +
-                  2 * G_31 * np.sqrt(beta_boro * beta_r) * D_boro * D_g +
-                  2 * G_11 * np.sqrt(beta_thn * beta_fast) * D_thn * D_fast +
-                  2 * G_23 * np.sqrt(beta_thn * beta_r) * D_thn * D_g +
-                  2 * G_23 * np.sqrt(beta_fast * beta_r) * D_fast * D_g) * tir ** 2
-        dose = 0.5 * (alphabeta_r / Gr) * (
-            np.sqrt(1 + 4 * Gr * beta_r / alpha_r ** 2 * (D_lineal + D_cuad)) - 1)
+        D_lineal = (
+            alpha_boro * D_boro
+            + alpha_thn * D_thn
+            + alpha_fast * D_fast
+            + alpha_r * D_g
+        ) * tir
+        D_cuad = (
+            G_11 * beta_boro * D_boro**2
+            + G_22 * beta_thn * D_thn**2
+            + G_22 * beta_fast * D_fast**2
+            + G_33 * beta_r * D_g**2
+            + 2 * G_12 * np.sqrt(beta_boro * beta_thn) * D_boro * D_thn
+            + 2 * G_12 * np.sqrt(beta_boro * beta_fast) * D_boro * D_fast
+            + 2 * G_31 * np.sqrt(beta_boro * beta_r) * D_boro * D_g
+            + 2 * G_11 * np.sqrt(beta_thn * beta_fast) * D_thn * D_fast
+            + 2 * G_23 * np.sqrt(beta_thn * beta_r) * D_thn * D_g
+            + 2 * G_23 * np.sqrt(beta_fast * beta_r) * D_fast * D_g
+        ) * tir**2
+        dose = (
+            0.5
+            * (alphabeta_r / Gr)
+            * (np.sqrt(1 + 4 * Gr * beta_r / alpha_r**2 * (D_lineal + D_cuad)) - 1)
+        )
         return np.nan_to_num(dose)
 
     def _cleanupOldDVH(self):
-        for cls, prefix in [("vtkMRMLPlotSeriesNode", "DVH_"),
-                             ("vtkMRMLTableNode", "Table_DVH_")]:
+        for cls, prefix in [
+            ("vtkMRMLPlotSeriesNode", "DVH_"),
+            ("vtkMRMLTableNode", "Table_DVH_"),
+        ]:
             coll = slicer.mrmlScene.GetNodesByClass(cls)
             for i in range(coll.GetNumberOfItems()):
                 node = coll.GetItemAsObject(i)
@@ -2938,8 +3602,11 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
         if old:
             slicer.mrmlScene.RemoveNode(old)
 
-    def calculateDVH(self, organs, dose_type, b10_conc, tir, model_params=None, mask_volume=None):
+    def calculateDVH(
+        self, organs, dose_type, b10_conc, tir, model_params=None, mask_volume=None
+    ):
         import re
+
         _log(f"\n=== DVH START: {len(organs)} organs, {dose_type} ===")
 
         if mask_volume is None:
@@ -2948,7 +3615,7 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
         ref_node = None
         for node in slicer.mrmlScene.GetNodesByClass("vtkMRMLScalarVolumeNode"):
             name = node.GetName()
-            if any(x in name for x in ['Kerma', 'Gamma', 'Dosis', 'DVH', 'Temp']):
+            if any(x in name for x in ["Kerma", "Gamma", "Dosis", "DVH", "Temp"]):
                 continue
             try:
                 arr = slicer.util.arrayFromVolume(node)
@@ -2964,7 +3631,9 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
         mask_array = slicer.util.arrayFromVolume(mask_volume).astype(np.float64)
 
         self._cleanupOldDVH()
-        plotChartNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotChartNode", "Chart_DVH")
+        plotChartNode = slicer.mrmlScene.AddNewNodeByClass(
+            "vtkMRMLPlotChartNode", "Chart_DVH"
+        )
 
         all_names = []
         any_dose_computed = False
@@ -2973,37 +3642,53 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
         voxel_vol_cc = spacing[0] * spacing[1] * spacing[2] / 1000.0
 
         for org in organs:
-            nmesh = int(org['nmesh'])
-            ratio = org['ratio']
-            rbe_b = org['rbe_boron']
-            rbe_f = org['rbe_fast']
-            rbe_t = org['rbe_thermal']
-            rbe_g = org['rbe_gamma']
+            nmesh = int(org["nmesh"])
+            ratio = org["ratio"]
+            rbe_b = org["rbe_boron"]
+            rbe_f = org["rbe_fast"]
+            rbe_t = org["rbe_thermal"]
+            rbe_g = org["rbe_gamma"]
 
-            print(f"[DVH] Procesando {org['name']} (mesh {nmesh}, gray_level {org.get('gray_level', 0)})...")
-            dose = self._calcDoseForMesh(nmesh, dose_type, b10_conc, tir,
-                                          ratio, rbe_b, rbe_f, rbe_t, rbe_g,
-                                          model_params)
+            print(
+                f"[DVH] Procesando {org['name']} (mesh {nmesh}, gray_level {org.get('gray_level', 0)})..."
+            )
+            dose = self._calcDoseForMesh(
+                nmesh,
+                dose_type,
+                b10_conc,
+                tir,
+                ratio,
+                rbe_b,
+                rbe_f,
+                rbe_t,
+                rbe_g,
+                model_params,
+            )
             if dose is None:
                 print(f"[DVH]  -> SKIP: no hay kerma volumes para mesh {nmesh}")
                 continue
             if dose.shape != ct_shape:
                 try:
                     from scipy.ndimage import zoom
-                    factors = [max(1, ct_shape[0]) / max(1, dose.shape[0]),
-                               max(1, ct_shape[1]) / max(1, dose.shape[1]),
-                               max(1, ct_shape[2]) / max(1, dose.shape[2])]
+
+                    factors = [
+                        max(1, ct_shape[0]) / max(1, dose.shape[0]),
+                        max(1, ct_shape[1]) / max(1, dose.shape[1]),
+                        max(1, ct_shape[2]) / max(1, dose.shape[2]),
+                    ]
                     dose = zoom(dose, factors, order=1)
                 except Exception as e:
                     print(f"[DVH]  -> SKIP: zoom fallo - {e}")
                     continue
             any_dose_computed = True
 
-            gl = org.get('gray_level', 0)
-            mask = (mask_array == gl)
+            gl = org.get("gray_level", 0)
+            mask = mask_array == gl
             roi_doses = dose[mask]
             if len(roi_doses) == 0:
-                print(f"[DVH]  -> SKIP: gray_level={gl} sin voxeles en mascara para '{org['name']}'")
+                print(
+                    f"[DVH]  -> SKIP: gray_level={gl} sin voxeles en mascara para '{org['name']}'"
+                )
                 continue
 
             roi_doses = roi_doses[~np.isnan(roi_doses)]
@@ -3026,15 +3711,19 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
             if Dmax > global_max_dose:
                 global_max_dose = Dmax
 
-            _log(f"  OK {org['name']}: {n} vox, vol={vol_cc:.4f}cc, "
-                 f"Dmin={Dmin:.6e} Dmax={Dmax:.6e} Dmedia={Dmean:.6e}")
+            _log(
+                f"  OK {org['name']}: {n} vox, vol={vol_cc:.4f}cc, "
+                f"Dmin={Dmin:.6e} Dmax={Dmax:.6e} Dmedia={Dmean:.6e}"
+            )
             _log(f"    primeras 5 dosis: {sorted_doses[:5].tolist()}")
             _log(f"    ultimas 5 dosis: {sorted_doses[-5:].tolist()}")
 
-            safe_name = re.sub(r'[^a-zA-Z0-9]', '_', org['name'])
-            all_names.append(org['name'])
+            safe_name = re.sub(r"[^a-zA-Z0-9]", "_", org["name"])
+            all_names.append(org["name"])
 
-            tn = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLTableNode", f"Table_DVH_{safe_name}")
+            tn = slicer.mrmlScene.AddNewNodeByClass(
+                "vtkMRMLTableNode", f"Table_DVH_{safe_name}"
+            )
             table_array = np.column_stack((sorted_doses, dvh_vol))
             slicer.util.updateTableFromArray(tn, table_array, ["Dose", "VolumePct"])
 
@@ -3042,10 +3731,16 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
             tn.GetTable().GetColumn(1).SetName("VolumePct")
             tn.Modified()
 
-            print(f"[DVH] Tabla '{tn.GetName()}': {tn.GetTable().GetNumberOfRows()} filas")
-            print(f"[DVH] Rango dosis: {sorted_doses[0]:.6e} - {sorted_doses[-1]:.6e} Gy")
+            print(
+                f"[DVH] Tabla '{tn.GetName()}': {tn.GetTable().GetNumberOfRows()} filas"
+            )
+            print(
+                f"[DVH] Rango dosis: {sorted_doses[0]:.6e} - {sorted_doses[-1]:.6e} Gy"
+            )
 
-            ps = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotSeriesNode", f"DVH_{safe_name}")
+            ps = slicer.mrmlScene.AddNewNodeByClass(
+                "vtkMRMLPlotSeriesNode", f"DVH_{safe_name}"
+            )
             ps.SetAndObserveTableNodeID(tn.GetID())
             ps.SetXColumnName("Dose")
             ps.SetYColumnName("VolumePct")
@@ -3064,8 +3759,10 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
         _log(f"  Nombres: {all_names}")
 
         dose_tag = dose_type.replace("Dosis ", "")
-        plotChartNode.SetTitle(f"DVH - {', '.join(all_names[:3])}" +
-                               ("..." if len(all_names) > 3 else f" ({dose_tag})"))
+        plotChartNode.SetTitle(
+            f"DVH - {', '.join(all_names[:3])}"
+            + ("..." if len(all_names) > 3 else f" ({dose_tag})")
+        )
         plotChartNode.SetXAxisTitle("Dosis [Gy]")
         plotChartNode.SetYAxisTitle("Volumen [%]")
         plotChartNode.SetLegendVisibility(True)
@@ -3077,7 +3774,9 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
         _log(f"  Axis ranges: X=[{xmin}, {xmax:.6e}] Y=[0, 105]")
 
         layoutManager = slicer.app.layoutManager()
-        layoutWithPlot = slicer.modules.plots.logic().GetLayoutWithPlot(layoutManager.layout)
+        layoutWithPlot = slicer.modules.plots.logic().GetLayoutWithPlot(
+            layoutManager.layout
+        )
         layoutManager.setLayout(layoutWithPlot)
         plotWidget = layoutManager.plotWidget(0)
         if plotWidget:
@@ -3095,13 +3794,21 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
             f"DVH calculado: {len(all_names)} organos\n"
             f"Dosis max: {global_max_dose:.4e} Gy\n"
             f"Ver tabla _dvh_debug.txt para datos crudos",
-            windowTitle="DVH Completo")
+            windowTitle="DVH Completo",
+        )
 
     # ------------------------------------------------------------------
     # Mascaras: generacion de labelmaps por ROI
     # ------------------------------------------------------------------
-    def generateMasks(self, structureNode, config, createIndividual=True,
-                      createCombined=True, skipEmpty=True, referenceNode=None):
+    def generateMasks(
+        self,
+        structureNode,
+        config,
+        createIndividual=True,
+        createCombined=True,
+        skipEmpty=True,
+        referenceNode=None,
+    ):
         """Genera un labelmap binario por ROI y un labelmap combinado.
 
         `structureNode` puede ser un vtkMRMLSegmentationNode (ruta principal:
@@ -3113,8 +3820,11 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
         Retorna un dict con el resultado por ROI y la verificacion de superposicion.
         """
         import traceback
+
         if structureNode is None:
-            raise ValueError("No hay volumen ni segmentacion de estructura seleccionada.")
+            raise ValueError(
+                "No hay volumen ni segmentacion de estructura seleccionada."
+            )
 
         # Detectar el tipo de nodo: los segmentos del Segment Editor son la via principal
         try:
@@ -3124,9 +3834,13 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
 
         if is_seg:
             return self._generateMasksFromSegmentation(
-                structureNode, config,
-                createIndividual=createIndividual, createCombined=createCombined,
-                skipEmpty=skipEmpty, referenceNode=referenceNode)
+                structureNode,
+                config,
+                createIndividual=createIndividual,
+                createCombined=createCombined,
+                skipEmpty=skipEmpty,
+                referenceNode=referenceNode,
+            )
 
         # Limpiar labelmaps de una corrida anterior (ruta volumen/labelmap).
         self._removeOldMaskNodes(keepNodes=(structureNode, referenceNode))
@@ -3149,18 +3863,22 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
         is_integer_valued = bool(np.all(arr_f == arr_int))
         looks_like_labelmap = is_integer_valued and nonzero_uniq.size <= 64
         if not looks_like_labelmap:
-            _log("generateMasks: ADVERTENCIA: el volumen de estructura NO parece un labelmap de gray_level "
-                 f"(enteros={is_integer_valued}, valores distintos={uniq_all.size}, "
-                 f"rango=[{int(arr_int.min())},{int(arr_int.max())}]). "
-                 "arr_int == gray_level solo coincidira en puntos aislados. "
-                 "Usa un nodo de Segmentacion o un labelmap con los gray_level exactos. "
-                 f"np.unique(arr_int)[:20]={uniq_all[:20].tolist()}")
+            _log(
+                "generateMasks: ADVERTENCIA: el volumen de estructura NO parece un labelmap de gray_level "
+                f"(enteros={is_integer_valued}, valores distintos={uniq_all.size}, "
+                f"rango=[{int(arr_int.min())},{int(arr_int.max())}]). "
+                "arr_int == gray_level solo coincidira en puntos aislados. "
+                "Usa un nodo de Segmentacion o un labelmap con los gray_level exactos. "
+                f"np.unique(arr_int)[:20]={uniq_all[:20].tolist()}"
+            )
 
-        gray_levels = [int(r.get('gray_level', 0)) for r in config]
+        gray_levels = [int(r.get("gray_level", 0)) for r in config]
         max_gl = max(gray_levels) if gray_levels else 0
         combined_dtype = np.uint8 if max_gl <= 255 else np.uint16
         if combined_dtype is not np.uint8:
-            _log(f"generateMasks: gray_level maximo {max_gl} > 255, combinado en uint16")
+            _log(
+                f"generateMasks: gray_level maximo {max_gl} > 255, combinado en uint16"
+            )
 
         combined = np.zeros(arr.shape, dtype=combined_dtype)
         counts = np.zeros(arr.shape, dtype=np.uint16)
@@ -3173,9 +3891,9 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
         combined_entries = []
 
         for roi in config:
-            gl = int(roi.get('gray_level', 0))
-            name = str(roi.get('name', f'ROI_{gl}'))
-            nmesh = int(roi.get('nmesh', 0))
+            gl = int(roi.get("gray_level", 0))
+            name = str(roi.get("name", f"ROI_{gl}"))
+            nmesh = int(roi.get("nmesh", 0))
 
             # gray_level 0 es aire: no es una ROI
             if gl == 0:
@@ -3183,7 +3901,7 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
                 _log(f"generateMasks: ROI '{name}' con gray_level 0 (aire), se omite")
                 continue
 
-            mask = (arr_int == gl)
+            mask = arr_int == gl
             nvox = int(np.count_nonzero(mask))
             estado = "OK" if nvox > 0 else "VACIA"
 
@@ -3191,23 +3909,31 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
             combined_entries.append((mask, gl, name, nvox))
 
             if createIndividual and (nvox > 0 or not skipEmpty):
-                safe_name = re.sub(r'\s+', '_', name.strip())
-                safe_name = re.sub(r'[^0-9A-Za-z_.-]', '_', safe_name) or f"ROI_{gl}"
+                safe_name = re.sub(r"\s+", "_", name.strip())
+                safe_name = re.sub(r"[^0-9A-Za-z_.-]", "_", safe_name) or f"ROI_{gl}"
                 color = self._get_distinct_color(gl % 100, 100)
                 # Usar el transform de structureNode si existe
-                transformID = structureNode.GetTransformNodeID() if structureNode else None
+                transformID = (
+                    structureNode.GetTransformNodeID() if structureNode else None
+                )
                 node = self._createLabelmapVolume(
-                    mask.astype(np.uint8), structureNode, f"{_PREFIX_INDIVIDUAL}{safe_name}",
-                    pixel_colors={1: color}, transformNodeID=transformID)
+                    mask.astype(np.uint8),
+                    structureNode,
+                    f"{_PREFIX_INDIVIDUAL}{safe_name}",
+                    pixel_colors={1: color},
+                    transformNodeID=transformID,
+                )
                 individual_nodes.append(node)
 
-            rows.append({
-                'name': name,
-                'gray_level': gl,
-                'nmesh': nmesh,
-                'nvox': nvox,
-                'estado': estado,
-            })
+            rows.append(
+                {
+                    "name": name,
+                    "gray_level": gl,
+                    "nmesh": nmesh,
+                    "nvox": nvox,
+                    "estado": estado,
+                }
+            )
 
         combined_node = None
         combined_gray_node = None
@@ -3220,17 +3946,26 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
                     combined[mask] = gl
             combined_colors = {}
             for row in rows:
-                if row['nvox'] > 0:
-                    combined_colors[row['gray_level']] = self._get_distinct_color(row['gray_level'] % 100, 100)
+                if row["nvox"] > 0:
+                    combined_colors[row["gray_level"]] = self._get_distinct_color(
+                        row["gray_level"] % 100, 100
+                    )
             transformID = structureNode.GetTransformNodeID() if structureNode else None
-            combined_node = self._createLabelmapVolume(combined, structureNode, _NAME_COMBINED,
-                                                         pixel_colors=combined_colors,
-                                                         transformNodeID=transformID)
+            combined_node = self._createLabelmapVolume(
+                combined,
+                structureNode,
+                _NAME_COMBINED,
+                pixel_colors=combined_colors,
+                transformNodeID=transformID,
+            )
             # Crear nodo gris combinado para voxelization
-            combined_gray_node = self._createLabelmapVolume(combined, structureNode,
-                                                           _NAME_COMBINED_GRAY,
-                                                           grayscale=True,
-                                                           transformNodeID=transformID)
+            combined_gray_node = self._createLabelmapVolume(
+                combined,
+                structureNode,
+                _NAME_COMBINED_GRAY,
+                grayscale=True,
+                transformNodeID=transformID,
+            )
 
         # --- Verificacion de superposicion ---
         overlap_voxels = int(np.count_nonzero(counts > 1))
@@ -3241,8 +3976,10 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
         # --- gray_level duplicado en la configuracion ---
         by_gl = {}
         for row in rows:
-            by_gl.setdefault(row['gray_level'], []).append(row['name'])
-        duplicates = [(gl, names) for gl, names in sorted(by_gl.items()) if len(names) > 1]
+            by_gl.setdefault(row["gray_level"], []).append(row["name"])
+        duplicates = [
+            (gl, names) for gl, names in sorted(by_gl.items()) if len(names) > 1
+        ]
         for gl, names in duplicates:
             _log(f"generateMasks: CONFLICTO gray_level {gl} compartido por {names}")
 
@@ -3251,41 +3988,55 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
         try:
             uniq = np.unique(arr_int)
             gl_set = set(by_gl.keys())
-            unmapped_values = [int(v) for v in uniq if int(v) != 0 and int(v) not in gl_set]
+            unmapped_values = [
+                int(v) for v in uniq if int(v) != 0 and int(v) not in gl_set
+            ]
         except Exception:
-            _log("generateMasks: fallo el calculo de valores no mapeados:\n" + traceback.format_exc())
+            _log(
+                "generateMasks: fallo el calculo de valores no mapeados:\n"
+                + traceback.format_exc()
+            )
 
-        empty_rois = [row['name'] for row in rows if row['nvox'] == 0]
+        empty_rois = [row["name"] for row in rows if row["nvox"] == 0]
 
         result = {
-            'rows': rows,
-            'overlap_voxels': overlap_voxels,
-            'overlap_rois': overlap_rois,
-            'duplicates': duplicates,
-            'unmapped_values': unmapped_values,
-            'empty_rois': empty_rois,
-            'combined_node': combined_node,
-            'combined_gray_node': combined_gray_node,
-            'individual_nodes': individual_nodes,
-            'total_voxels': int(arr.size),
-            'volume_name': structureNode.GetName(),
-            'dims': f"{arr.shape[2]} x {arr.shape[1]} x {arr.shape[0]}",
-            'n_rois_config': len(config) + len(skipped_gl0),
-            'skipped_gl0': skipped_gl0,
-            'mode': 'volume',
-            'sin_config': [],
-            'n_segments': 0,
+            "rows": rows,
+            "overlap_voxels": overlap_voxels,
+            "overlap_rois": overlap_rois,
+            "duplicates": duplicates,
+            "unmapped_values": unmapped_values,
+            "empty_rois": empty_rois,
+            "combined_node": combined_node,
+            "combined_gray_node": combined_gray_node,
+            "individual_nodes": individual_nodes,
+            "total_voxels": int(arr.size),
+            "volume_name": structureNode.GetName(),
+            "dims": f"{arr.shape[2]} x {arr.shape[1]} x {arr.shape[0]}",
+            "n_rois_config": len(config) + len(skipped_gl0),
+            "skipped_gl0": skipped_gl0,
+            "mode": "volume",
+            "sin_config": [],
+            "n_segments": 0,
         }
 
-        _log(f"generateMasks: total={result['total_voxels']} voxeles, "
-             f"superposicion={overlap_voxels}, duplicados={len(duplicates)}, "
-             f"no_mapeados={len(unmapped_values)}, vacias={len(empty_rois)}")
+        _log(
+            f"generateMasks: total={result['total_voxels']} voxeles, "
+            f"superposicion={overlap_voxels}, duplicados={len(duplicates)}, "
+            f"no_mapeados={len(unmapped_values)}, vacias={len(empty_rois)}"
+        )
         if individual_nodes:
             self._groupMaskNodesInFolder(individual_nodes)
         return result
 
-    def _generateMasksFromSegmentation(self, structureNode, config, createIndividual=True,
-                                       createCombined=True, skipEmpty=True, referenceNode=None):
+    def _generateMasksFromSegmentation(
+        self,
+        structureNode,
+        config,
+        createIndividual=True,
+        createCombined=True,
+        skipEmpty=True,
+        referenceNode=None,
+    ):
         """Genera labelmaps a partir de los segmentos de un vtkMRMLSegmentationNode.
 
         El emparejamiento segmento -> ROI de la config es POR NOMBRE del segmento,
@@ -3302,17 +4053,17 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
         # Indice de la config por nombre normalizado, y por nombre "compacto"
         # (sin espacios) para tolerar variantes como 'RT OPTIC NERVE' vs 'RTOPTIC NERVE'.
         def _compact(s):
-            return _normName(s).replace(' ', '')
+            return _normName(s).replace(" ", "")
 
         cfg_by_name = {}
         for row in config:
-            cfg_by_name[_normName(row.get('name', ''))] = row
-            cfg_by_name.setdefault(_compact(row.get('name', '')), row)
+            cfg_by_name[_normName(row.get("name", ""))] = row
+            cfg_by_name.setdefault(_compact(row.get("name", "")), row)
 
         # El aire vive en la clave 'aire' del jsonc (no en 'rois'): fila pseudo
         # con gray_level 0 para que el aire quede como fondo (universo U=1).
-        _AIR_ROW = {'name': 'AIRE', 'gray_level': 0, 'universo': 1, 'nmesh': -1}
-        for _alias in ('AIRE', 'AIR', 'EXTERIOR', 'AIREEXTERIOR'):
+        _AIR_ROW = {"name": "AIRE", "gray_level": 0, "universo": 1, "nmesh": -1}
+        for _alias in ("AIRE", "AIR", "EXTERIOR", "AIREEXTERIOR"):
             cfg_by_name.setdefault(_alias, _AIR_ROW)
 
         def _matchConfigRow(seg_name):
@@ -3327,7 +4078,7 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
         if ref_node is None:
             for node in slicer.mrmlScene.GetNodesByClass("vtkMRMLScalarVolumeNode"):
                 name = node.GetName() or ""
-                if any(x in name for x in ['Kerma', 'Gamma', 'Dosis', 'DVH', 'Temp']):
+                if any(x in name for x in ["Kerma", "Gamma", "Dosis", "DVH", "Temp"]):
                     continue
                 # Un vtkMRMLLabelMapVolumeNode ES un vtkMRMLScalarVolumeNode: si no se
                 # descarta, ref_node puede terminar siendo un labelmap del propio
@@ -3336,11 +4087,13 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
                 # combinado nuevo se cree como _1, _2... acumulando duplicados.
                 if node.IsA("vtkMRMLLabelMapVolumeNode"):
                     continue
-                if (name.startswith(_PREFIX_INDIVIDUAL)
-                        or name == _NAME_COMBINED
-                        or name.startswith(_NAME_COMBINED + "_")
-                        or name == _NAME_COMBINED_GRAY
-                        or name.startswith(_NAME_COMBINED_GRAY + "_")):
+                if (
+                    name.startswith(_PREFIX_INDIVIDUAL)
+                    or name == _NAME_COMBINED
+                    or name.startswith(_NAME_COMBINED + "_")
+                    or name == _NAME_COMBINED_GRAY
+                    or name.startswith(_NAME_COMBINED_GRAY + "_")
+                ):
                     continue
                 try:
                     arr_ref = slicer.util.arrayFromVolume(node)
@@ -3350,18 +4103,23 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
                 except Exception:
                     continue
         if ref_node is None:
-            raise ValueError("Selecciona un volumen de referencia para definir la geometria de salida.")
+            raise ValueError(
+                "Selecciona un volumen de referencia para definir la geometria de salida."
+            )
 
         # Limpiar labelmaps de una corrida anterior para no dejar duplicados
         # (_1, _2...) que confundian al tab Voxelizado.
         self._removeOldMaskNodes(keepNodes=(structureNode, ref_node))
 
         # --- Representacion binaria: asegurarla antes de extraer arrays ---
-        if hasattr(structureNode, 'CreateBinaryLabelmapRepresentation'):
+        if hasattr(structureNode, "CreateBinaryLabelmapRepresentation"):
             try:
                 structureNode.CreateBinaryLabelmapRepresentation()
             except Exception:
-                _log("generateMasks: CreateBinaryLabelmapRepresentation fallo:\n" + traceback.format_exc())
+                _log(
+                    "generateMasks: CreateBinaryLabelmapRepresentation fallo:\n"
+                    + traceback.format_exc()
+                )
 
         segmentation = structureNode.GetSegmentation()
         n_seg = segmentation.GetNumberOfSegments()
@@ -3376,11 +4134,13 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
 
         # Los gray_level salen UNICAMENTE de la config (organ_config.jsonc).
         # No se inventan valores para segmentos sin ROI en la config.
-        gray_levels = [int(r.get('gray_level', 0)) for r in config]
+        gray_levels = [int(r.get("gray_level", 0)) for r in config]
         max_gl = max(gray_levels) if gray_levels else 0
         combined_dtype = np.uint16 if max_gl > 255 else np.uint8
-        _log(f"generateMasks: gray_levels desde organ_config.jsonc = "
-             f"{sorted(set(g for g in gray_levels if g > 0))}")
+        _log(
+            f"generateMasks: gray_levels desde organ_config.jsonc = "
+            f"{sorted(set(g for g in gray_levels if g > 0))}"
+        )
 
         # --- Geometria de salida (la del volumen de referencia) ---
         ref_arr = np.asarray(slicer.util.arrayFromVolume(ref_node))
@@ -3391,14 +4151,18 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
         counts = np.zeros(ref_shape, dtype=np.uint16)
 
         # API disponible segun version de Slicer
-        has_bin_api = hasattr(slicer.util, 'arrayFromSegmentBinaryLabelmap')
-        has_lbl_api = hasattr(slicer.util, 'arrayFromSegmentLabelmap')
+        has_bin_api = hasattr(slicer.util, "arrayFromSegmentBinaryLabelmap")
+        has_lbl_api = hasattr(slicer.util, "arrayFromSegmentLabelmap")
         if not has_bin_api and not has_lbl_api:
-            raise RuntimeError("Esta version de Slicer no soporta "
-                               "arrayFromSegmentBinaryLabelmap. Actualiza a Slicer 5.x.")
+            raise RuntimeError(
+                "Esta version de Slicer no soporta "
+                "arrayFromSegmentBinaryLabelmap. Actualiza a Slicer 5.x."
+            )
         if not has_bin_api:
-            _log("generateMasks: arrayFromSegmentBinaryLabelmap no disponible, "
-                 "se usa arrayFromSegmentLabelmap (> 0)")
+            _log(
+                "generateMasks: arrayFromSegmentBinaryLabelmap no disponible, "
+                "se usa arrayFromSegmentLabelmap (> 0)"
+            )
 
         rows = []
         individual_nodes = []
@@ -3413,53 +4177,79 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
             if cfg_row is None:
                 sin_config.append(seg_name)
                 _log(f"generateMasks: segmento '{seg_name}' sin ROI en la config")
-                _log(f"generateMasks: segmento '{seg_name}' (SIN CONFIG) no se incluye en el combinado")
+                _log(
+                    f"generateMasks: segmento '{seg_name}' (SIN CONFIG) no se incluye en el combinado"
+                )
 
             # Extraer el array binario del segmento en la geometria de referencia
             arr = None
             try:
                 if has_bin_api:
-                    arr = slicer.util.arrayFromSegmentBinaryLabelmap(structureNode, seg_id, ref_node)
+                    arr = slicer.util.arrayFromSegmentBinaryLabelmap(
+                        structureNode, seg_id, ref_node
+                    )
                 arr = np.asarray(arr)
             except Exception:
-                _log(f"generateMasks: arrayFromSegmentBinaryLabelmap fallo para '{seg_name}', "
-                     "se intenta arrayFromSegmentLabelmap:\n" + traceback.format_exc())
+                _log(
+                    f"generateMasks: arrayFromSegmentBinaryLabelmap fallo para '{seg_name}', "
+                    "se intenta arrayFromSegmentLabelmap:\n" + traceback.format_exc()
+                )
                 try:
-                    arr = slicer.util.arrayFromSegmentLabelmap(structureNode, seg_id, ref_node)
+                    arr = slicer.util.arrayFromSegmentLabelmap(
+                        structureNode, seg_id, ref_node
+                    )
                     arr = np.asarray(arr)
                 except Exception:
-                    _log(f"generateMasks: fallo extrayendo el segmento '{seg_name}':\n"
-                         + traceback.format_exc())
-                    rows.append({'name': seg_name, 'gray_level': 0,
-                                 'nmesh': int(cfg_row.get('nmesh', -1)) if cfg_row else -1,
-                                 'nvox': 0, 'estado': 'ERROR'})
+                    _log(
+                        f"generateMasks: fallo extrayendo el segmento '{seg_name}':\n"
+                        + traceback.format_exc()
+                    )
+                    rows.append(
+                        {
+                            "name": seg_name,
+                            "gray_level": 0,
+                            "nmesh": int(cfg_row.get("nmesh", -1)) if cfg_row else -1,
+                            "nvox": 0,
+                            "estado": "ERROR",
+                        }
+                    )
                     continue
 
             # Todos los arrays deben compartir la geometria del volumen de referencia
             if arr.ndim != 3 or arr.shape != ref_shape:
                 got = tuple(arr.shape)
-                _log(f"generateMasks: segmento '{seg_name}' con geometria {got} != {ref_shape}, se omite")
-                rows.append({'name': seg_name, 'gray_level': 0,
-                             'nmesh': int(cfg_row.get('nmesh', -1)) if cfg_row else -1,
-                             'nvox': 0, 'estado': 'GEOMETRIA'})
+                _log(
+                    f"generateMasks: segmento '{seg_name}' con geometria {got} != {ref_shape}, se omite"
+                )
+                rows.append(
+                    {
+                        "name": seg_name,
+                        "gray_level": 0,
+                        "nmesh": int(cfg_row.get("nmesh", -1)) if cfg_row else -1,
+                        "nvox": 0,
+                        "estado": "GEOMETRIA",
+                    }
+                )
                 continue
 
-            mask = (arr > 0)
+            mask = arr > 0
             nvox = int(np.count_nonzero(mask))
 
             # Valor en el labelmap combinado: SIEMPRE desde organ_config.jsonc.
             # Un segmento sin ROI en la config no recibe gray_level inventado.
             if cfg_row is not None:
-                gl = int(cfg_row.get('gray_level', 0))
+                gl = int(cfg_row.get("gray_level", 0))
                 if gl > 0:
-                    estado = 'OK' if nvox > 0 else 'VACIA'
+                    estado = "OK" if nvox > 0 else "VACIA"
                 else:
-                    estado = 'SIN GRAY_LEVEL'
+                    estado = "SIN GRAY_LEVEL"
             else:
                 gl = 0
-                estado = 'SIN CONFIG'
+                estado = "SIN CONFIG"
 
-            is_body = ('BODY' in _normName(seg_name)) or ('CUERPO' in _normName(seg_name))
+            is_body = ("BODY" in _normName(seg_name)) or (
+                "CUERPO" in _normName(seg_name)
+            )
             if createCombined and nvox > 0 and cfg_row is not None and gl > 0:
                 seg_combined_entries.append((mask, gl, seg_name, nvox, is_body))
             counts += mask.astype(np.uint16)
@@ -3467,9 +4257,11 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
             masks.append((mask, gl, seg_name, seg_color))
 
             if createIndividual and (nvox > 0 or not skipEmpty):
-                safe_name = re.sub(r'\s+', '_', str(seg_name).strip())
-                safe_name = re.sub(r'[^0-9A-Za-z_.-]', '_', safe_name) or f"SEG_{idx}"
-                seg_color = structureNode.GetSegmentation().GetSegment(seg_id).GetColor()
+                safe_name = re.sub(r"\s+", "_", str(seg_name).strip())
+                safe_name = re.sub(r"[^0-9A-Za-z_.-]", "_", safe_name) or f"SEG_{idx}"
+                seg_color = (
+                    structureNode.GetSegmentation().GetSegment(seg_id).GetColor()
+                )
                 # Usar el transform de ref_node si existe, sino el de structureNode
                 transformID = None
                 if ref_node and ref_node.GetTransformNodeID():
@@ -3477,17 +4269,25 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
                 elif structureNode and structureNode.GetTransformNodeID():
                     transformID = structureNode.GetTransformNodeID()
                 node = self._createLabelmapVolume(
-                    mask.astype(np.uint8), ref_node, f"{_PREFIX_INDIVIDUAL}{safe_name}",
-                    pixel_colors={1: seg_color}, transformNodeID=transformID)
+                    mask.astype(np.uint8),
+                    ref_node,
+                    f"{_PREFIX_INDIVIDUAL}{safe_name}",
+                    pixel_colors={1: seg_color},
+                    transformNodeID=transformID,
+                )
                 individual_nodes.append(node)
 
-            rows.append({
-                'name': seg_name,
-                'gray_level': gl,
-                'nmesh': int(cfg_row.get('nmesh', -1)) if cfg_row is not None else -1,
-                'nvox': nvox,
-                'estado': estado,
-            })
+            rows.append(
+                {
+                    "name": seg_name,
+                    "gray_level": gl,
+                    "nmesh": int(cfg_row.get("nmesh", -1))
+                    if cfg_row is not None
+                    else -1,
+                    "nvox": nvox,
+                    "estado": estado,
+                }
+            )
 
         combined_node = None
         combined_gray_node = None
@@ -3508,8 +4308,10 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
                 for mask, gl, seg_name, nvox, _is_body in body_entries:
                     body_effective = mask & ~union_others
                     combined[body_effective] = gl
-                    _log(f"generateMasks: segmento BODY '{seg_name}' escrito como resta de los demas "
-                         f"({int(np.count_nonzero(body_effective))} de {nvox} voxeles)")
+                    _log(
+                        f"generateMasks: segmento BODY '{seg_name}' escrito como resta de los demas "
+                        f"({int(np.count_nonzero(body_effective))} de {nvox} voxeles)"
+                    )
             else:
                 # Sin segmento BODY: comportamiento original, escribir en el orden del bucle.
                 for mask, gl, seg_name, nvox, _is_body in seg_combined_entries:
@@ -3523,14 +4325,21 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
                 transformID = ref_node.GetTransformNodeID()
             elif structureNode and structureNode.GetTransformNodeID():
                 transformID = structureNode.GetTransformNodeID()
-            combined_node = self._createLabelmapVolume(combined, ref_node, _NAME_COMBINED,
-                                                       pixel_colors=combined_colors,
-                                                       transformNodeID=transformID)
+            combined_node = self._createLabelmapVolume(
+                combined,
+                ref_node,
+                _NAME_COMBINED,
+                pixel_colors=combined_colors,
+                transformNodeID=transformID,
+            )
             # Crear nodo gris combinado para voxelization
-            combined_gray_node = self._createLabelmapVolume(combined, ref_node,
-                                                           _NAME_COMBINED_GRAY,
-                                                           grayscale=True,
-                                                           transformNodeID=transformID)
+            combined_gray_node = self._createLabelmapVolume(
+                combined,
+                ref_node,
+                _NAME_COMBINED_GRAY,
+                grayscale=True,
+                transformNodeID=transformID,
+            )
 
         # --- Verificacion de superposicion: en segmentacion SI puede haber solape ---
         overlap_voxels = int(np.count_nonzero(counts > 1))
@@ -3544,51 +4353,59 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
         # --- Valores repetidos en el labelmap combinado ---
         by_gl = {}
         for row in rows:
-            if row['gray_level'] > 0:
-                by_gl.setdefault(row['gray_level'], []).append(row['name'])
-        duplicates = [(gl, names) for gl, names in sorted(by_gl.items()) if len(names) > 1]
+            if row["gray_level"] > 0:
+                by_gl.setdefault(row["gray_level"], []).append(row["name"])
+        duplicates = [
+            (gl, names) for gl, names in sorted(by_gl.items()) if len(names) > 1
+        ]
         for gl, names in duplicates:
             _log(f"generateMasks: CONFLICTO valor {gl} compartido por {names}")
 
-        empty_rois = [row['name'] for row in rows
-                      if row['nvox'] == 0 and row.get('estado') in ('VACIA', 'SIN CONFIG', 'SIN GRAY_LEVEL')]
+        empty_rois = [
+            row["name"]
+            for row in rows
+            if row["nvox"] == 0
+            and row.get("estado") in ("VACIA", "SIN CONFIG", "SIN GRAY_LEVEL")
+        ]
 
         result = {
-            'rows': rows,
-            'overlap_voxels': overlap_voxels,
-            'overlap_rois': overlap_rois,
-            'duplicates': duplicates,
-            'unmapped_values': [],
-            'empty_rois': empty_rois,
-            'combined_node': combined_node,
-            'combined_gray_node': combined_gray_node,
-            'individual_nodes': individual_nodes,
-            'total_voxels': int(ref_arr.size),
-            'volume_name': structureNode.GetName(),
-            'dims': f"{ref_shape[2]} x {ref_shape[1]} x {ref_shape[0]}",
-            'n_rois_config': len(config),
-            'skipped_gl0': [],
-            'mode': 'segmentation',
-            'sin_config': sin_config,
-            'n_segments': n_seg,
+            "rows": rows,
+            "overlap_voxels": overlap_voxels,
+            "overlap_rois": overlap_rois,
+            "duplicates": duplicates,
+            "unmapped_values": [],
+            "empty_rois": empty_rois,
+            "combined_node": combined_node,
+            "combined_gray_node": combined_gray_node,
+            "individual_nodes": individual_nodes,
+            "total_voxels": int(ref_arr.size),
+            "volume_name": structureNode.GetName(),
+            "dims": f"{ref_shape[2]} x {ref_shape[1]} x {ref_shape[0]}",
+            "n_rois_config": len(config),
+            "skipped_gl0": [],
+            "mode": "segmentation",
+            "sin_config": sin_config,
+            "n_segments": n_seg,
         }
 
-        _log(f"generateMasks[segmentation]: segmentos={n_seg}, filas={len(rows)}, "
-             f"superposicion={overlap_voxels}, sin_config={len(sin_config)}, "
-             f"vacios={len(empty_rois)}, ref='{ref_node.GetName()}'")
+        _log(
+            f"generateMasks[segmentation]: segmentos={n_seg}, filas={len(rows)}, "
+            f"superposicion={overlap_voxels}, sin_config={len(sin_config)}, "
+            f"vacios={len(empty_rois)}, ref='{ref_node.GetName()}'"
+        )
         if individual_nodes:
             self._groupMaskNodesInFolder(individual_nodes)
         return result
 
     def _roisInOverlap(self, arr_int, rows):
         """Devuelve las ROIs que aportan voxeles a la region superpuesta (solo si hay conflicto)."""
-        gls = [row['gray_level'] for row in rows]
+        gls = [row["gray_level"] for row in rows]
         if not gls:
             return []
         counts = np.zeros(arr_int.shape, dtype=np.uint16)
         masks = []
         for row in rows:
-            mask = (arr_int == row['gray_level'])
+            mask = arr_int == row["gray_level"]
             counts += mask.astype(np.uint16)
             masks.append(mask)
         overlap = counts > 1
@@ -3616,10 +4433,14 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
 
         # No se crean nodos: createIndividual=False y createCombined=False
         result = self.generateMasks(
-            structureNode, config,
-            createIndividual=False, createCombined=False, skipEmpty=False,
-            referenceNode=referenceNode)
-        result['created_nodes'] = 0
+            structureNode,
+            config,
+            createIndividual=False,
+            createCombined=False,
+            skipEmpty=False,
+            referenceNode=referenceNode,
+        )
+        result["created_nodes"] = 0
         return result
 
     # ------------------------------------------------------------------
@@ -3633,7 +4454,9 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
         if not nodes:
             return None
         try:
-            shNode = slicer.vtkMRMLSubjectHierarchyNode.GetSubjectHierarchyNode(slicer.mrmlScene)
+            shNode = slicer.vtkMRMLSubjectHierarchyNode.GetSubjectHierarchyNode(
+                slicer.mrmlScene
+            )
             if shNode is None:
                 return None
             folderId = shNode.GetItemByName(folderName)
@@ -3648,7 +4471,9 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
                 else:
                     shNode.CreateItem(folderId, node)
             shNode.SetItemExpanded(folderId, True)
-            _log(f"Mascaras agrupadas en carpeta Subject Hierarchy: '{folderName}' ({len(nodes)} nodos)")
+            _log(
+                f"Mascaras agrupadas en carpeta Subject Hierarchy: '{folderName}' ({len(nodes)} nodos)"
+            )
             return folderId
         except Exception as e:
             _log(f"No se pudo agrupar las mascaras en carpeta '{folderName}': {e}")
@@ -3657,6 +4482,7 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
     def _get_distinct_color(self, index, total):
         """Genera un color RGB distintivo (0-1) cíclico para distinguir ROIs."""
         import colorsys
+
         hue = (index * 0.61803398875) % 1.0  # golden ratio para buena distribucion
         r, g, b = colorsys.hsv_to_rgb(hue, 0.75, 0.9)
         return (r, g, b)
@@ -3674,24 +4500,38 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
                 keep.add(n.GetID())
         removed = []
         try:
-            for node in list(slicer.mrmlScene.GetNodesByClass("vtkMRMLLabelMapVolumeNode")):
+            for node in list(
+                slicer.mrmlScene.GetNodesByClass("vtkMRMLLabelMapVolumeNode")
+            ):
                 if node.GetID() in keep:
                     continue
                 name = node.GetName() or ""
-                if name.startswith(_PREFIX_INDIVIDUAL) or name == _NAME_COMBINED \
-                        or name == _NAME_COMBINED_GRAY \
-                        or name.startswith(_NAME_COMBINED + "_") \
-                        or name.startswith(_NAME_COMBINED_GRAY + "_"):
+                if (
+                    name.startswith(_PREFIX_INDIVIDUAL)
+                    or name == _NAME_COMBINED
+                    or name == _NAME_COMBINED_GRAY
+                    or name.startswith(_NAME_COMBINED + "_")
+                    or name.startswith(_NAME_COMBINED_GRAY + "_")
+                ):
                     removed.append(name)
                     slicer.mrmlScene.RemoveNode(node)
         except Exception as e:
             _log(f"_removeOldMaskNodes: error: {e}")
         if removed:
-            _log(f"_removeOldMaskNodes: eliminados {len(removed)} nodos previos: {removed}")
+            _log(
+                f"_removeOldMaskNodes: eliminados {len(removed)} nodos previos: {removed}"
+            )
         return removed
 
-    def _createLabelmapVolume(self, mask_array, referenceNode, name, pixel_colors=None,
-                              transformNodeID=None, grayscale=False):
+    def _createLabelmapVolume(
+        self,
+        mask_array,
+        referenceNode,
+        name,
+        pixel_colors=None,
+        transformNodeID=None,
+        grayscale=False,
+    ):
         """Crea un labelmap con la MISMA geometria que el volumen de referencia.
 
         Preserva el dtype entero de entrada (uint8 o uint16) para no truncar
@@ -3706,17 +4546,23 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
             de colores distintivos por ROI.
         """
         mask_array = np.asarray(mask_array)
-        if mask_array.dtype.kind not in ('u', 'i'):
-            _log(f"_createLabelmapVolume: dtype {mask_array.dtype} no entero para "
-                 f"'{name}', se convierte a uint8")
+        if mask_array.dtype.kind not in ("u", "i"):
+            _log(
+                f"_createLabelmapVolume: dtype {mask_array.dtype} no entero para "
+                f"'{name}', se convierte a uint8"
+            )
             mask_array = mask_array.astype(np.uint8)
         if mask_array.ndim == 2:
-            _log(f"_createLabelmapVolume: array 2D para '{name}', se agrega una dimension")
+            _log(
+                f"_createLabelmapVolume: array 2D para '{name}', se agrega una dimension"
+            )
             mask_array = mask_array.reshape((1,) + mask_array.shape)
         mask_array = np.ascontiguousarray(mask_array)
 
         if referenceNode is None:
-            raise ValueError(f"_createLabelmapVolume: referenceNode es None para '{name}'")
+            raise ValueError(
+                f"_createLabelmapVolume: referenceNode es None para '{name}'"
+            )
         node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLLabelMapVolumeNode", name)
         slicer.util.updateVolumeFromArray(node, mask_array)
         node.SetOrigin(referenceNode.GetOrigin())
@@ -3745,9 +4591,13 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
                     finalMat = vtk.vtkMatrix4x4()
                     vtk.vtkMatrix4x4.Multiply4x4(tmat, mat, finalMat)
                     node.SetIJKToRASMatrix(finalMat)
-                    _log(f"_createLabelmapVolume: aplicado transform de '{referenceNode.GetName()}' a '{name}'")
+                    _log(
+                        f"_createLabelmapVolume: aplicado transform de '{referenceNode.GetName()}' a '{name}'"
+                    )
                 except Exception as e:
-                    _log(f"_createLabelmapVolume: no se pudo aplicar transform de '{referenceNode.GetName()}': {e}")
+                    _log(
+                        f"_createLabelmapVolume: no se pudo aplicar transform de '{referenceNode.GetName()}': {e}"
+                    )
                     node.SetIJKToRASMatrix(mat)
             else:
                 # No hay transform, usar la matriz IJKToRAS original
@@ -3759,7 +4609,10 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
                 # Crear un color table node personalizado con los colores asignados por valor.
                 # SetPixelValueColor no es confiable en Slicer 5.8.1 para labelmaps.
                 import colorsys as _colorsys
-                colorNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLColorTableNode", name + "_ColorTable")
+
+                colorNode = slicer.mrmlScene.AddNewNodeByClass(
+                    "vtkMRMLColorTableNode", name + "_ColorTable"
+                )
                 colorNode.SetTypeToUser()
                 # Asignar suficientes slots antes de SetColor() (exigido por vtkMRMLColorTableNode)
                 max_val = max(pixel_colors.keys()) if pixel_colors else 0
@@ -3776,7 +4629,9 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
                 max_val = int(np.max(mask_array))
                 if max_val < 1:
                     max_val = 1
-                colorNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLColorTableNode", name + "_ColorTable_Gray")
+                colorNode = slicer.mrmlScene.AddNewNodeByClass(
+                    "vtkMRMLColorTableNode", name + "_ColorTable_Gray"
+                )
                 colorNode.SetTypeToUser()
                 colorNode.SetNumberOfColors(max_val + 1)
                 # Valor 0 = aire/fondo (transparente)
@@ -3794,15 +4649,23 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
     def cleanupMasks(self):
         """Elimina de la escena los labelmaps generados por este modulo."""
         import traceback
+
         removed = 0
         try:
             collection = slicer.mrmlScene.GetNodesByClass("vtkMRMLLabelMapVolumeNode")
-            nodes = [collection.GetItemAsObject(i) for i in range(collection.GetNumberOfItems())]
+            nodes = [
+                collection.GetItemAsObject(i)
+                for i in range(collection.GetNumberOfItems())
+            ]
             for node in nodes:
                 if node is None:
                     continue
                 name = node.GetName() or ""
-                if name.startswith(_PREFIX_INDIVIDUAL) or name == _NAME_COMBINED or name == _NAME_COMBINED_GRAY:
+                if (
+                    name.startswith(_PREFIX_INDIVIDUAL)
+                    or name == _NAME_COMBINED
+                    or name == _NAME_COMBINED_GRAY
+                ):
                     slicer.mrmlScene.RemoveNode(node)
                     removed += 1
         except Exception:
@@ -3820,7 +4683,9 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
             if parent is None:
                 return poly
             transform = vtk.vtkGeneralTransform()
-            slicer.vtkMRMLTransformNode.GetTransformBetweenNodes(parent, None, transform)
+            slicer.vtkMRMLTransformNode.GetTransformBetweenNodes(
+                parent, None, transform
+            )
             transformer = vtk.vtkTransformPolyDataFilter()
             transformer.SetTransform(transform)
             transformer.SetInputData(poly)
@@ -3838,7 +4703,9 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
             poly1 = self._modelToWorldPolyData(model1)
             poly2 = self._modelToWorldPolyData(model2)
             if poly1 is None or poly2 is None:
-                _log("detectCollisions: no se pudo obtener polydata de uno o ambos modelos")
+                _log(
+                    "detectCollisions: no se pudo obtener polydata de uno o ambos modelos"
+                )
                 return None
 
             tri1 = vtk.vtkTriangleFilter()
@@ -3859,8 +4726,10 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
             detector.Update()
 
             contacts = int(detector.GetNumberOfContacts())
-            _log(f"detectCollisions: '{model1.GetName()}' vs '{model2.GetName()}' -> {contacts} contactos")
-            return {'contacts': contacts, 'collision': contacts > 0}
+            _log(
+                f"detectCollisions: '{model1.GetName()}' vs '{model2.GetName()}' -> {contacts} contactos"
+            )
+            return {"contacts": contacts, "collision": contacts > 0}
         except Exception as e:
             _log(f"detectCollisions: error: {e}")
             return None
@@ -3868,15 +4737,15 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
     def _mapVoxelOrientation(self, arr, orientation):
         """Reordena el array de Slicer (k,j,i) al orden y orientacion que espera PHITS."""
         M = np.transpose(arr, (1, 2, 0))  # Slicer (k,j,i) -> (Y, X, Z)
-        if orientation == 'Axial':
+        if orientation == "Axial":
             M = np.transpose(M, (1, 0, 2))
             M = M[:, ::-1, :]
             M = np.flip(M, axis=2)
-        elif orientation == 'Sagital':
+        elif orientation == "Sagital":
             M = np.transpose(M, (2, 1, 0))
             M = M[:, ::-1, :]
             M = np.flip(M, axis=2)
-        elif orientation == 'Coronal':
+        elif orientation == "Coronal":
             M = np.transpose(M, (2, 0, 1))
             M = M[:, ::-1, :]
             M = np.flip(M, axis=2)
@@ -3913,7 +4782,9 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
             factors = [float(factorX), float(factorY), float(factorZ)]
             for f in factors:
                 if f <= 0.0 or f > 1.0:
-                    _log(f"resampleMaskVolume: factor invalido {f} (debe ser 0 < f <= 1)")
+                    _log(
+                        f"resampleMaskVolume: factor invalido {f} (debe ser 0 < f <= 1)"
+                    )
                     return None
             if all(abs(f - 1.0) < 1e-9 for f in factors):
                 return maskNode
@@ -3923,16 +4794,19 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
                 _log("resampleMaskVolume: arrayFromVolume devolvio None")
                 return None
             if arr.ndim != 3:
-                _log(f"resampleMaskVolume: array con {arr.ndim} dimensiones, se esperaba 3")
+                _log(
+                    f"resampleMaskVolume: array con {arr.ndim} dimensiones, se esperaba 3"
+                )
                 return None
 
             # El array de Slicer es (k, j, i) = (Z, Y, X)
             axes_factors = [factors[2], factors[1], factors[0]]
-            spacing = maskNode.GetSpacing()                       # (sx, sy, sz)
-            axes_spacing = [spacing[2], spacing[1], spacing[0]]   # (sz, sy, sx)
+            spacing = maskNode.GetSpacing()  # (sx, sy, sz)
+            axes_spacing = [spacing[2], spacing[1], spacing[0]]  # (sz, sy, sx)
 
-            new_shape = [max(1, int(round(arr.shape[a] * axes_factors[a])))
-                         for a in range(3)]
+            new_shape = [
+                max(1, int(round(arr.shape[a] * axes_factors[a]))) for a in range(3)
+            ]
             idx = []
             for a in range(3):
                 f = axes_factors[a]
@@ -3942,21 +4816,20 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
                 idx.append(i)
             resampled = arr[np.ix_(idx[0], idx[1], idx[2])]
 
-            name = (f"{maskNode.GetName()}_resample_"
-                    f"{factors[0]:g}x{factors[1]:g}x{factors[2]:g}")
+            name = (
+                f"{maskNode.GetName()}_resample_"
+                f"{factors[0]:g}x{factors[1]:g}x{factors[2]:g}"
+            )
             old = slicer.mrmlScene.GetFirstNodeByName(name)
             if old is not None:
                 slicer.mrmlScene.RemoveNode(old)
 
-            node = slicer.mrmlScene.AddNewNodeByClass(
-                "vtkMRMLLabelMapVolumeNode", name)
-            slicer.util.updateVolumeFromArray(
-                node, np.ascontiguousarray(resampled))
+            node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLLabelMapVolumeNode", name)
+            slicer.util.updateVolumeFromArray(node, np.ascontiguousarray(resampled))
             node.SetOrigin(maskNode.GetOrigin())
 
             new_spacing_zyx = [axes_spacing[a] / axes_factors[a] for a in range(3)]
-            node.SetSpacing(new_spacing_zyx[2], new_spacing_zyx[1],
-                            new_spacing_zyx[0])
+            node.SetSpacing(new_spacing_zyx[2], new_spacing_zyx[1], new_spacing_zyx[0])
 
             # Copiar la orientacion IJK->RAS escalando cada columna por el nuevo spacing
             mat = vtk.vtkMatrix4x4()
@@ -3985,9 +4858,11 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
             except Exception:
                 pass
 
-            _log(f"resampleMaskVolume: '{maskNode.GetName()}' {tuple(arr.shape)} -> "
-                 f"{tuple(resampled.shape)} factores=({factors[0]:g},{factors[1]:g},"
-                 f"{factors[2]:g}) spacing={tuple(node.GetSpacing())}")
+            _log(
+                f"resampleMaskVolume: '{maskNode.GetName()}' {tuple(arr.shape)} -> "
+                f"{tuple(resampled.shape)} factores=({factors[0]:g},{factors[1]:g},"
+                f"{factors[2]:g}) spacing={tuple(node.GetSpacing())}"
+            )
             return node
         except Exception as e:
             _log(f"resampleMaskVolume: error: {e}")
@@ -4015,7 +4890,7 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
             for gl, uni in universo_by_gray.items():
                 mapped[M == gl] = uni
 
-            flat = mapped.flatten(order='F')
+            flat = mapped.flatten(order="F")
             encoded = self._rle_encode(flat)
 
             out_dir = os.path.dirname(outputPath)
@@ -4023,21 +4898,23 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
                 os.makedirs(out_dir, exist_ok=True)
 
             per_line = 21
-            with open(outputPath, 'w') as f:
+            with open(outputPath, "w") as f:
                 for i in range(0, len(encoded), per_line):
-                    chunk = encoded[i:i + per_line]
-                    f.write('     ' + ' '.join(str(x) for x in chunk) + ' \n')
+                    chunk = encoded[i : i + per_line]
+                    f.write("     " + " ".join(str(x) for x in chunk) + " \n")
 
             universos = sorted(set(universo_by_gray[gl] for gl in present))
-            _log(f"generateVoxelDat: {outputPath} shape={M.shape} orient={orientation} "
-                 f"voxeles={int(flat.size)} valores_rle={len(encoded)} universos={universos}")
+            _log(
+                f"generateVoxelDat: {outputPath} shape={M.shape} orient={orientation} "
+                f"voxeles={int(flat.size)} valores_rle={len(encoded)} universos={universos}"
+            )
             return {
-                'path': outputPath,
-                'values': len(encoded),
-                'voxels': int(flat.size),
-                'shape': tuple(int(s) for s in M.shape),
-                'orientation': orientation,
-                'universos': universos,
+                "path": outputPath,
+                "values": len(encoded),
+                "voxels": int(flat.size),
+                "shape": tuple(int(s) for s in M.shape),
+                "orientation": orientation,
+                "universos": universos,
             }
         except Exception as e:
             _log(f"generateVoxelDat: error: {e}")
@@ -4048,63 +4925,76 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
     # ------------------------------------------------------------------
     def buildReport(self, result):
         """Construye el texto del informe de verificacion a partir del dict de resultados."""
-        rows = result.get('rows', [])
+        rows = result.get("rows", [])
         lines = []
         lines.append("=== VERIFICACION DE MASCARAS BNCT ===")
         lines.append(f"Volumen: {result.get('volume_name', '-')}")
         lines.append(f"Dimensiones (X x Y x Z): {result.get('dims', '-')}")
         lines.append(f"Voxeles totales: {result.get('total_voxels', 0)}")
-        lines.append(f"ROIs en configuracion: {result.get('n_rois_config', len(rows))}   "
-                     f"evaluadas: {len(rows)}")
-        if result.get('skipped_gl0'):
-            lines.append(f"ROIs omitidas (gray_level 0 = aire): {len(result['skipped_gl0'])}")
+        lines.append(
+            f"ROIs en configuracion: {result.get('n_rois_config', len(rows))}   "
+            f"evaluadas: {len(rows)}"
+        )
+        if result.get("skipped_gl0"):
+            lines.append(
+                f"ROIs omitidas (gray_level 0 = aire): {len(result['skipped_gl0'])}"
+            )
         lines.append("")
 
         # 1) Superposicion real de voxeles
-        ov = result.get('overlap_voxels', 0)
+        ov = result.get("overlap_voxels", 0)
         if ov == 0:
             lines.append("1) Superposicion de voxeles: 0 (disjuntas verificadas)")
         else:
             lines.append(f"1) Superposicion de voxeles: {ov} -> CONFLICTO")
-            for item in result.get('overlap_rois', [])[:15]:
+            for item in result.get("overlap_rois", [])[:15]:
                 lines.append(f"   - {item}")
 
         # 2) gray_level duplicado en la configuracion
-        dups = result.get('duplicates', [])
+        dups = result.get("duplicates", [])
         if not dups:
             lines.append("2) gray_level duplicado: 0 (todos los valores son unicos)")
         else:
             lines.append(f"2) gray_level duplicado: {len(dups)} -> CONFLICTO REAL")
             for gl, names in dups:
-                lines.append(f"   - gray_level {gl}: {', '.join(str(n) for n in names)}")
+                lines.append(
+                    f"   - gray_level {gl}: {', '.join(str(n) for n in names)}"
+                )
 
         # 3) Voxeles no mapeados
-        unmapped = result.get('unmapped_values', [])
+        unmapped = result.get("unmapped_values", [])
         if not unmapped:
-            lines.append("3) Voxeles no mapeados: 0 (todos los valores del volumen pertenecen a una ROI)")
+            lines.append(
+                "3) Voxeles no mapeados: 0 (todos los valores del volumen pertenecen a una ROI)"
+            )
         else:
-            lines.append(f"3) Valores del volumen sin ROI: {len(unmapped)} valores distintos")
-            lines.append(f"   {', '.join(str(v) for v in unmapped[:15])}"
-                         + (" ..." if len(unmapped) > 15 else ""))
+            lines.append(
+                f"3) Valores del volumen sin ROI: {len(unmapped)} valores distintos"
+            )
+            lines.append(
+                f"   {', '.join(str(v) for v in unmapped[:15])}"
+                + (" ..." if len(unmapped) > 15 else "")
+            )
 
         # 4) ROIs vacias
-        empty = result.get('empty_rois', [])
+        empty = result.get("empty_rois", [])
         if not empty:
             lines.append("4) ROIs vacias: 0")
         else:
             lines.append(f"4) ROIs vacias: {len(empty)} (sin voxeles en el volumen)")
             for name in empty:
-                gl = next((r['gray_level'] for r in rows if r['name'] == name), '?')
+                gl = next((r["gray_level"] for r in rows if r["name"] == name), "?")
                 lines.append(f"   - {name} (gray_level {gl})")
 
         # Resumen por ROI
         lines.append("")
-        n_ok = sum(1 for r in rows if r.get('estado') == 'OK')
-        lines.append(f"Resumen: {n_ok} ROIs con voxeles, "
-                     f"{len(empty)} vacias, {len(dups)} conflictos de gray_level, "
-                     f"{ov} voxeles superpuestos")
+        n_ok = sum(1 for r in rows if r.get("estado") == "OK")
+        lines.append(
+            f"Resumen: {n_ok} ROIs con voxeles, "
+            f"{len(empty)} vacias, {len(dups)} conflictos de gray_level, "
+            f"{ov} voxeles superpuestos"
+        )
         return "\n".join(lines)
 
 
 # Fin de BNCT.py
-
