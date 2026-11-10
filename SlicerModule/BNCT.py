@@ -2434,7 +2434,8 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
             )
         if not oars:
             slicer.util.messageBox(
-                "No hay OARs incluidos en el producto UTCP: UTCP = TCP.", "UTCP"
+                "No hay OARs incluidos en el producto UTCP: UTCP = TCP.",
+                windowTitle="UTCP",
             )
         b10 = self.dvhB10Spin.value
         tir = self.dvhTirSpin.value
@@ -2497,7 +2498,7 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
                 )
         for w in res["warnings"]:
             lines.append(f"[AVISO] {w}")
-        slicer.util.messageBox("\n".join(lines), "Resultado UTCP")
+        slicer.util.messageBox("\n".join(lines), windowTitle="Resultado UTCP")
 
     def onUTCPOptimize(self):
         if _UTCP_IMPORT_ERROR:
@@ -2544,7 +2545,7 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
             f"UTCP maximo = {res['utcp_max']:.4f}\n"
             f"TCP en t_opt = {res['tcp'][int(np.nanargmax(res['utcp']))]:.4f}"
             f"{feasible}\n\nCurvas guardadas en tabla/grafico 'UTCP'.",
-            "Optimizacion de tiempo de irradiacion",
+            windowTitle="Optimizacion de tiempo de irradiacion",
         )
 
     def _utcpPlotSweep(self, res, inputs):
