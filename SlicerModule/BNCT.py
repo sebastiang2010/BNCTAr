@@ -2513,6 +2513,16 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
         tvals = np.linspace(1.0, t_max, 40)
         try:
             qt.QApplication.setOverrideCursor(qt.Qt.WaitCursor)
+
+            def _prog(i, total):
+                # Mantiene la UI viva y muestra el avance del barrido.
+                mainWindow = slicer.util.mainWindow()
+                if mainWindow is not None:
+                    mainWindow.statusBar().showMessage(
+                        "UTCP: barrido temporal %d/%d" % (i + 1, total)
+                    )
+                slicer.app.processEvents()
+
             res = sweep_utcp(
                 inputs["comps_map"],
                 tvals[0],
@@ -2520,6 +2530,7 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
                 inputs["oars"],
                 tvals,
                 inputs["b10"],
+                progress=_prog,
             )
         except Exception as e:
             slicer.util.errorDisplay(f"Error en barrido UTCP: {str(e)}")
@@ -2575,7 +2586,23 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
             s = sn.GetItemAsIndex(i)
             if s.GetChartNodeID() == plot.GetID():
                 slicer.mrmlScene.RemoveNode(s)
-        for cname, title in (("TCP", "TCP"), ("UTCP", "UTCP")):
+        paleta = [
+            (0.10, 0.10, 0.90),
+            (0.85, 0.45, 0.05),
+            (0.00, 0.60, 0.30),
+            (0.55, 0.10, 0.75),
+            (0.90, 0.10, 0.60),
+            (0.00, 0.60, 0.70),
+            (0.45, 0.45, 0.45),
+            (0.75, 0.75, 0.00),
+        ]
+        series = [
+            ("TCP", "TCP", (0.10, 0.10, 0.90)),
+            ("UTCP", "UTCP", (0.90, 0.10, 0.10)),
+        ]
+        for k, (name, curve) in enumerate(res["ntcp"].items()):
+            series.append((f"NTCP_{name}", f"NTCP {name}", paleta[k % len(paleta)]))
+        for cname, title, rgb in series:
             s = slicer.mrmlScene.AddNewNodeByClass(
                 "vtkMRMLPlotSeriesNode", f"Plot_UTCP_{title}"
             )
@@ -2584,8 +2611,11 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
             s.SetYColumnName(cname)
             s.SetLabel(title)
             s.SetPlotType(s.PlotTypeLine)
-            s.SetColor(0.9, 0.1, 0.1) if title == "UTCP" else s.SetColor(0.1, 0.1, 0.9)
+            s.SetColor(*rgb)
             s.SetAndObservePlotChartNodeID(plot.GetID())
+        mw = slicer.util.mainWindow()
+        if mw is not None:
+            mw.statusBar().clearMessage()
         slicer.util.selectModule("Plots")
 
     # ------------------------------------------------------------------
