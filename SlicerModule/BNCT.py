@@ -2308,11 +2308,10 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
 
     def _utcpCollectComps(self, meshes, mask_node):
         """Arma {nmesh: comps} con los tally crudos de cada mesh (suma _C2)."""
-        logic = BNCTLogic()
         ref_shape = np.array(slicer.util.arrayFromVolume(mask_node)).shape
         comps_map = {}
         for nmesh in sorted(meshes):
-            volumes = logic._getKermaVolumesForMesh(int(nmesh))
+            volumes = self._getKermaVolumesForMesh(int(nmesh))
             if not volumes:
                 raise ValueError(
                     "No hay componentes KERMA para mesh %d. Calcule la "
