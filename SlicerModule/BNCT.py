@@ -65,6 +65,9 @@ _NAME_COMBINED = "Mascaras_Combinadas"
 _NAME_COMBINED_GRAY = "Mascaras_Combinadas_Gris"
 _NAME_MASKS_FOLDER = "Mascaras_Organos"
 
+# Nodo transform (traslacion pura) que centra el BODY del paciente en el origen RAS
+_NAME_CENTER_TRANSFORM = "BNCT_Centrar_BODY"
+
 # ------------------------------------------------------------------
 # Motor radiobiologico UTCP (capa pura, sin Qt/slicer; testeable)
 # ------------------------------------------------------------------
@@ -984,6 +987,20 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
         self.isoDoseButton.connect("clicked(bool)", self.onIsoDose)
         fl.addRow(self.isoDoseButton)
 
+        self.btnCenterBody = qt.QPushButton("Centrar BODY en origen")
+        self.btnCenterBody.toolTip = (
+            "Aplica un transform lineal que lleva el centro del BODY al origen (0,0,0) RAS."
+        )
+        self.btnCenterBody.connect("clicked(bool)", self.onCenterBody)
+        fl.addRow(self.btnCenterBody)
+
+        self.btnUncenterBody = qt.QPushButton("Quitar centrado BODY")
+        self.btnUncenterBody.toolTip = (
+            "Elimina el transform de centrado y restaura la posicion original."
+        )
+        self.btnUncenterBody.connect("clicked(bool)", self.onUncenterBody)
+        fl.addRow(self.btnUncenterBody)
+
         # --- Seccion KERMA por ROI ---
         configBtn = ctk.ctkCollapsibleButton()
         configBtn.text = "Configuracion KERMA por ROI"
@@ -1454,6 +1471,9 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
     # Handlers compartidos / Dosimetry
     # ------------------------------------------------------------------
     def _computeCenterOffset(self):
+        # GetBounds devuelve los bounds LOCALES del volumen (sin transforms):
+        # es coherente con la interpolacion, que tambien usa la matriz
+        # IJK->RAS local de la CT.
         refNode = self.referenceSelector.currentNode()
         if not refNode:
             return None
@@ -1893,6 +1913,61 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
                 rbeMapped.append(1.0)
         return (organRow, rbeMapped, volumes)
 
+    def onCenterBody(self):
+        """Centra el BODY (segmento o mascara) en el origen RAS.
+
+        Aplica un transform lineal de traslacion a la CT de referencia, a la
+        segmentacion, a las mascaras del modulo y al modelo 'Paciente'.
+        """
+        import traceback
+
+        try:
+            refNode = self.referenceSelector.currentNode()
+            structNode = self.structureSelector.currentNode()
+            logic = BNCTLogic()
+            result = logic.centerBody(
+                referenceNode=refNode, structureNode=structNode
+            )
+            if result is None:
+                slicer.util.errorDisplay(
+                    "No se pudo determinar el BODY.\n\n"
+                    "Selecciona la imagen de referencia (pestana Dosimetry) y la "
+                    "segmentacion con el segmento BODY (pestana Mascaras).",
+                )
+                return
+            offset = result["offset"]
+            bounds = result["bounds"]
+            msg = (
+                f"BODY '{result['segment_name']}' centrado en el origen RAS.\n\n"
+                f"Traslacion (mm): X={offset[0]:.3f}, Y={offset[1]:.3f}, Z={offset[2]:.3f}\n"
+                f"Bounds finales (mm):\n"
+                f"  X: [{bounds[0]:.3f}, {bounds[1]:.3f}]\n"
+                f"  Y: [{bounds[2]:.3f}, {bounds[3]:.3f}]\n"
+                f"  Z: [{bounds[4]:.3f}, {bounds[5]:.3f}]\n"
+                f"Nodos movidos: {result['n_nodes']}\n"
+                f"Transform: {result['transform_name']}"
+            )
+            slicer.util.infoDisplay(msg, windowTitle="Centrar BODY")
+        except Exception:
+            _log("Error en onCenterBody:\n" + traceback.format_exc())
+            slicer.util.errorDisplay("Error centrando el BODY. Ver _bnct_debug.txt.")
+
+    def onUncenterBody(self):
+        """Quita el transform de centrado y restaura la posicion original."""
+        import traceback
+
+        try:
+            released = BNCTLogic().uncenterBody()
+            slicer.util.infoDisplay(
+                f"Se libero el transform de centrado en {released} nodo(s).",
+                windowTitle="Quitar centrado BODY",
+            )
+        except Exception:
+            _log("Error en onUncenterBody:\n" + traceback.format_exc())
+            slicer.util.errorDisplay(
+                "Error quitando el centrado del BODY. Ver _bnct_debug.txt."
+            )
+
     def onPhysDose(self):
         result = self._buildOrganDialog("Dosis Fisica", ask_rbe=False)
         if result is None:
@@ -2127,6 +2202,7 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
                 scale=self.scaleFactor.value,
                 origin=nodes[0].GetOrigin(),
                 spacing=nodes[0].GetSpacing(),
+                transformNodeID=nodes[0].GetTransformNodeID(),
             )
             slicer.util.infoDisplay("Dosis Isoefectiva calculada correctamente.")
         except Exception as e:
@@ -3096,7 +3172,11 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
             for j, comp in enumerate(comp_names):
                 vol_name = f"{comp}_Kerma{i}{suffix}"
                 self.createDoseVolume(
-                    n_data["data"][j], final_origin, final_spacing, vol_name
+                    n_data["data"][j],
+                    final_origin,
+                    final_spacing,
+                    vol_name,
+                    transformNodeID=refNode.GetTransformNodeID() if refNode else None,
                 )
 
         has_gamma = False
@@ -3119,7 +3199,11 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
                 )
 
             self.createDoseVolume(
-                g_data["data"][0], final_origin, final_spacing, gamma_name
+                g_data["data"][0],
+                final_origin,
+                final_spacing,
+                gamma_name,
+                transformNodeID=refNode.GetTransformNodeID() if refNode else None,
             )
             has_gamma = True
         else:
@@ -3196,7 +3280,13 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
 
         origin = nodes[0].GetOrigin()
         spacing = nodes[0].GetSpacing()
-        self.createDoseVolume(phys_dose, origin, spacing, "Dosis_Fisica_BNCT")
+        self.createDoseVolume(
+            phys_dose,
+            origin,
+            spacing,
+            "Dosis_Fisica_BNCT",
+            transformNodeID=nodes[0].GetTransformNodeID(),
+        )
 
         print(f"Dosis Física: max={np.max(phys_dose):.4f}, min={np.min(phys_dose):.4f}")
 
@@ -3232,7 +3322,13 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
 
         origin = nodes[0].GetOrigin()
         spacing = nodes[0].GetSpacing()
-        self.createDoseVolume(rbe_dose, origin, spacing, "Dosis_RBE_BNCT")
+        self.createDoseVolume(
+            rbe_dose,
+            origin,
+            spacing,
+            "Dosis_RBE_BNCT",
+            transformNodeID=nodes[0].GetTransformNodeID(),
+        )
 
         print(f"Dosis RBE: max={np.max(rbe_dose):.4f}, min={np.min(rbe_dose):.4f}")
 
@@ -3253,6 +3349,7 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
         scale=1.0,
         origin=(0, 0, 0),
         spacing=(1, 1, 1),
+        transformNodeID=None,
     ):
         """Dosis Isoefectiva = modelo LQ con Lea-Catcheside."""
         if comp_arrays["boro"] is None:
@@ -3348,7 +3445,13 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
 
         DisoE = np.nan_to_num(DisoE)
 
-        self.createDoseVolume(DisoE, origin, spacing, "Dosis_IsoE_BNCT")
+        self.createDoseVolume(
+            DisoE,
+            origin,
+            spacing,
+            "Dosis_IsoE_BNCT",
+            transformNodeID=transformNodeID,
+        )
         print(f"Dosis Isoefectiva: max={np.max(DisoE):.4f}, min={np.min(DisoE):.4f}")
 
     def interpolateDose(self, dose_array, source_data, target_node):
@@ -3550,7 +3653,14 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
             "particle": particle,
         }
 
-    def createDoseVolume(self, array, origin, spacing, name):
+    def createDoseVolume(self, array, origin, spacing, name, transformNodeID=None):
+        """Crea un volumen de dosis con la geometria local dada.
+
+        `origin`/`spacing` son los valores LOCALES del volumen de referencia
+        (la interpolacion tambien usa la matriz IJK->RAS local), por eso el
+        volumen de dosis debe colgar del mismo transform padre que la CT para
+        que no quede desalineado.
+        """
         volumeNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode", name)
 
         volumeNode.SetOrigin(origin)
@@ -3559,6 +3669,9 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
 
         volumeNode.SetOrigin(origin)
         volumeNode.SetSpacing(spacing)
+
+        if transformNodeID:
+            volumeNode.SetAndObserveTransformNodeID(transformNodeID)
 
         print(f"--- Volumen Creado: {name} ---")
         print(f"  Array shape: {array.shape}")
@@ -4857,6 +4970,547 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
             _log("Error en cleanupMasks:\n" + traceback.format_exc())
         _log(f"cleanupMasks: {removed} nodos eliminados")
         return removed
+
+    # ------------------------------------------------------------------
+    # Centrado del BODY en el origen RAS
+    # ------------------------------------------------------------------
+    def _findBodySegment(self, segmentationNode):
+        """Devuelve (segmentId, segmentName) del segmento BODY/CUERPO.
+
+        Reusa el criterio de la generacion de mascaras: el nombre normalizado
+        (`_normName`) contiene BODY o CUERPO. Se prefiere la coincidencia
+        exacta sobre la coincidencia por subcadena.
+        """
+        if segmentationNode is None:
+            return (None, None)
+        try:
+            if not segmentationNode.IsA("vtkMRMLSegmentationNode"):
+                return (None, None)
+            segmentation = segmentationNode.GetSegmentation()
+            if segmentation is None:
+                return (None, None)
+            n_seg = segmentation.GetNumberOfSegments()
+        except Exception:
+            _log("_findBodySegment: no se pudo leer la segmentacion")
+            return (None, None)
+
+        fallback = (None, None)
+        for i in range(n_seg):
+            try:
+                seg_id = segmentation.GetNthSegmentID(i)
+                seg = segmentation.GetSegment(seg_id)
+                seg_name = seg.GetName() if seg else seg_id
+            except Exception:
+                continue
+            norm = _normName(seg_name)
+            if norm in ("BODY", "CUERPO"):
+                return (seg_id, seg_name)
+            if ("BODY" in norm) or ("CUERPO" in norm):
+                if fallback[0] is None:
+                    fallback = (seg_id, seg_name)
+        return fallback
+
+    def _bodyTightBoundsRAS(self, array, referenceNode):
+        """BBox ajustado (tight) del BODY mapeado a RAS.
+
+        `array` es un array binario en la geometria local de `referenceNode`
+        (orden k, j, i = Z, Y, X). Devuelve (bounds, center) con
+        bounds = [xmin, xmax, ymin, ymax, zmin, zmax] y center = [cx, cy, cz].
+        Devuelve (None, None) si el array es None, no es 3D o esta vacio.
+        """
+        if array is None or referenceNode is None:
+            return (None, None)
+        arr = np.asarray(array)
+        if arr.ndim != 3:
+            _log("_bodyTightBoundsRAS: el array del BODY no es 3D")
+            return (None, None)
+        mask = arr > 0
+        if not bool(mask.any()):
+            return (None, None)
+
+        ks = np.where(mask.any(axis=(1, 2)))[0]
+        js = np.where(mask.any(axis=(0, 2)))[0]
+        iss = np.where(mask.any(axis=(0, 1)))[0]
+        if ks.size == 0 or js.size == 0 or iss.size == 0:
+            return (None, None)
+
+        # El voxel i ocupa [i-0.5, i+0.5] en el espacio IJK: se usan las
+        # caras externas del bloque de voxeles para el extent fisico real.
+        i_vals = (float(iss[0]) - 0.5, float(iss[-1]) + 0.5)
+        j_vals = (float(js[0]) - 0.5, float(js[-1]) + 0.5)
+        k_vals = (float(ks[0]) - 0.5, float(ks[-1]) + 0.5)
+
+        corners = np.array(
+            [[i, j, k] for i in i_vals for j in j_vals for k in k_vals],
+            dtype=np.float64,
+        )
+
+        mat = vtk.vtkMatrix4x4()
+        referenceNode.GetIJKToRASMatrix(mat)
+        m_np = np.asarray(slicer.util.arrayFromVTKMatrix(mat), dtype=np.float64)
+        m_np = m_np.reshape((4, 4))
+        homo = np.vstack([corners.T, np.ones((1, corners.shape[0]))])
+        ras = m_np @ homo
+
+        bounds = [
+            float(ras[0].min()),
+            float(ras[0].max()),
+            float(ras[1].min()),
+            float(ras[1].max()),
+            float(ras[2].min()),
+            float(ras[2].max()),
+        ]
+        center = [
+            (bounds[0] + bounds[1]) / 2.0,
+            (bounds[2] + bounds[3]) / 2.0,
+            (bounds[4] + bounds[5]) / 2.0,
+        ]
+        return (bounds, center)
+
+    def _findBodyLabelmap(self):
+        """Labelmap BODY del modulo (Mascara_BODY o nombre que contenga BODY)."""
+        import traceback
+
+        try:
+            collection = slicer.mrmlScene.GetNodesByClass(
+                "vtkMRMLLabelMapVolumeNode"
+            )
+            candidates = []
+            for i in range(collection.GetNumberOfItems()):
+                node = collection.GetItemAsObject(i)
+                if node is None:
+                    continue
+                norm = _normName(node.GetName())
+                if ("BODY" in norm) or ("CUERPO" in norm):
+                    candidates.append(node)
+            if not candidates:
+                return None
+            exact = f"{_PREFIX_INDIVIDUAL}BODY"
+            for node in candidates:
+                if (node.GetName() or "") == exact:
+                    return node
+            return candidates[0]
+        except Exception:
+            _log("_findBodyLabelmap: error:\n" + traceback.format_exc())
+            return None
+
+    def _findReferenceVolume(self):
+        """Primer volumen escalar 3D de la escena que puede servir de geometria."""
+        try:
+            collection = slicer.mrmlScene.GetNodesByClass(
+                "vtkMRMLScalarVolumeNode"
+            )
+            for i in range(collection.GetNumberOfItems()):
+                node = collection.GetItemAsObject(i)
+                if node is None:
+                    continue
+                name = node.GetName() or ""
+                if any(x in name for x in ["Kerma", "Gamma", "Dosis", "DVH", "Temp"]):
+                    continue
+                if node.IsA("vtkMRMLLabelMapVolumeNode"):
+                    continue
+                if name.startswith(_PREFIX_INDIVIDUAL) or name.startswith(
+                    _NAME_COMBINED
+                ):
+                    continue
+                try:
+                    arr = slicer.util.arrayFromVolume(node)
+                    if arr is not None and np.asarray(arr).ndim == 3:
+                        return node
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        return None
+
+    def _sameIJKToRAS(self, nodeA, nodeB, tol=1e-4):
+        """True si dos nodos comparten la misma matriz IJK->RAS local."""
+        if nodeA is None or nodeB is None:
+            return False
+        try:
+            ma = vtk.vtkMatrix4x4()
+            mb = vtk.vtkMatrix4x4()
+            nodeA.GetIJKToRASMatrix(ma)
+            nodeB.GetIJKToRASMatrix(mb)
+            a = np.asarray(
+                slicer.util.arrayFromVTKMatrix(ma), dtype=np.float64
+            ).reshape((4, 4))
+            b = np.asarray(
+                slicer.util.arrayFromVTKMatrix(mb), dtype=np.float64
+            ).reshape((4, 4))
+            return bool(np.allclose(a, b, atol=tol))
+        except Exception:
+            return False
+
+    def _transformChain(self, node):
+        """Cadena de transforms de un nodo: [padre directo, ..., raiz]."""
+        chain = []
+        if node is None:
+            return chain
+        try:
+            tid = node.GetTransformNodeID()
+        except Exception:
+            return chain
+        seen = set()
+        while tid:
+            if tid in seen:
+                break
+            seen.add(tid)
+            tnode = slicer.mrmlScene.GetNodeByID(tid)
+            if tnode is None:
+                break
+            chain.append(tnode)
+            try:
+                tid = tnode.GetTransformNodeID()
+            except Exception:
+                break
+        return chain
+
+    def _chainMatrix(self, chain, overrideNode=None, overrideMat=None):
+        """Matriz 4x4 (numpy) de una cadena de transforms [directo, ..., raiz].
+
+        Devuelve M_raiz * ... * M_directo (la geometria local se aplica
+        despues, por la izquierda, con este factor).
+        `overrideNode`/`overrideMat` permiten sustituir la matriz de un
+        transform concreto de la cadena.
+        """
+        m = np.eye(4, dtype=np.float64)
+        for tnode in reversed(chain):
+            if overrideNode is not None and tnode.GetID() == overrideNode.GetID():
+                tm_np = np.asarray(overrideMat, dtype=np.float64).reshape((4, 4))
+            else:
+                tm = vtk.vtkMatrix4x4()
+                try:
+                    tnode.GetMatrixTransformToParent(tm)
+                except Exception:
+                    continue
+                tm_np = np.asarray(
+                    slicer.util.arrayFromVTKMatrix(tm), dtype=np.float64
+                ).reshape((4, 4))
+            m = m @ tm_np
+        return m
+
+    def _boundsFromLocal(self, bounds_local, mat_np):
+        """AABB en mundo de un AABB local mapeado por `mat_np` (4x4)."""
+        corners = np.array(
+            [
+                [x, y, z, 1.0]
+                for x in (bounds_local[0], bounds_local[1])
+                for y in (bounds_local[2], bounds_local[3])
+                for z in (bounds_local[4], bounds_local[5])
+            ],
+            dtype=np.float64,
+        ).T
+        ras = np.asarray(mat_np, dtype=np.float64).reshape((4, 4)) @ corners
+        return [
+            float(ras[0].min()),
+            float(ras[0].max()),
+            float(ras[1].min()),
+            float(ras[1].max()),
+            float(ras[2].min()),
+            float(ras[2].max()),
+        ]
+
+    def centerBody(self, referenceNode=None, structureNode=None):
+        """Centra el BODY del paciente en el origen RAS (0,0,0).
+
+        Crea (o reutiliza) un `vtkMRMLLinearTransformNode` con una traslacion
+        pura y lo encadena como hijo del transform padre existente (nunca se
+        pisa el padre a ciegas). El offset se calcula con el tight bbox del
+        BODY en la geometria de la CT de referencia.
+
+        Devuelve un dict con 'offset', 'bounds', 'n_nodes', 'transform_name' y
+        'segment_name', o None si no se pudo determinar el BODY.
+        """
+        import traceback
+
+        try:
+            body_array = None
+            geom_node = None
+            segment_name = None
+            source = None
+
+            # --- 1) BODY desde la segmentacion ---
+            if structureNode is not None:
+                seg_id, seg_name = self._findBodySegment(structureNode)
+                if seg_id is not None:
+                    ref = referenceNode
+                    if ref is None:
+                        ref = self._findReferenceVolume()
+                    if ref is not None:
+                        arr = None
+                        try:
+                            arr = slicer.util.arrayFromSegmentBinaryLabelmap(
+                                structureNode, seg_id, ref
+                            )
+                        except Exception:
+                            arr = None
+                        if arr is None:
+                            try:
+                                arr = slicer.util.arrayFromSegmentLabelmap(
+                                    structureNode, seg_id, ref
+                                )
+                            except Exception:
+                                arr = None
+                        if arr is not None:
+                            body_array = np.asarray(arr)
+                            geom_node = ref
+                            segment_name = seg_name
+                            source = "segmentacion"
+
+            # --- 2) fallback: labelmap BODY del modulo ---
+            if body_array is None:
+                body_lm = self._findBodyLabelmap()
+                if body_lm is not None:
+                    arr = slicer.util.arrayFromVolume(body_lm)
+                    if arr is not None:
+                        body_array = np.asarray(arr)
+                        geom_node = body_lm
+                        segment_name = body_lm.GetName()
+                        source = "labelmap"
+                        # Si la CT de referencia comparte la misma geometria
+                        # local, se usa como ancla: la CT define el transform
+                        # padre que se preserva al encadenar el centrado.
+                        if referenceNode is not None and self._sameIJKToRAS(
+                            body_lm, referenceNode
+                        ):
+                            geom_node = referenceNode
+
+            if body_array is None or geom_node is None:
+                _log("centerBody: no se pudo obtener el BODY")
+                return None
+            if referenceNode is None:
+                _log(
+                    "centerBody: no hay imagen de referencia seleccionada; "
+                    "la CT no sera movida"
+                )
+
+            bounds_local, center_local = self._bodyTightBoundsRAS(
+                body_array, geom_node
+            )
+            if bounds_local is None:
+                _log("centerBody: el BODY esta vacio o no es 3D")
+                return None
+
+            # --- Nodo transform de centrado (reutilizable) ---
+            transformNode = slicer.mrmlScene.GetFirstNodeByName(_NAME_CENTER_TRANSFORM)
+            if transformNode is not None and not transformNode.IsA(
+                "vtkMRMLLinearTransformNode"
+            ):
+                slicer.mrmlScene.RemoveNode(transformNode)
+                transformNode = None
+            if transformNode is None:
+                transformNode = slicer.mrmlScene.AddNewNodeByClass(
+                    "vtkMRMLLinearTransformNode", _NAME_CENTER_TRANSFORM
+                )
+
+            chain = self._transformChain(geom_node)
+            ct_index = None
+            for i, tnode in enumerate(chain):
+                if tnode.GetID() == transformNode.GetID():
+                    ct_index = i
+                    break
+
+            if ct_index is None:
+                # El transform se inserta entre el nodo y su padre directo:
+                # el padre canonico se conserva como padre del transform.
+                canonical_parent = chain[0] if chain else None
+                above = chain
+                below = []
+                final_chain = [transformNode] + chain
+            else:
+                canonical_parent = (
+                    chain[ct_index + 1] if ct_index + 1 < len(chain) else None
+                )
+                above = chain[ct_index + 1 :]
+                below = chain[:ct_index]
+                final_chain = chain
+
+            # Centro del BODY en mundo, sin el efecto del transform de centrado
+            A = self._chainMatrix(above)
+            B = self._chainMatrix(below)
+            center_vec = np.array(
+                [center_local[0], center_local[1], center_local[2], 1.0],
+                dtype=np.float64,
+            )
+            center_world = A @ (B @ center_vec)
+            try:
+                inv_lin = np.linalg.inv(A[:3, :3])
+            except np.linalg.LinAlgError:
+                _log(
+                    "centerBody: la parte lineal del transform padre no es "
+                    "invertible; no se aplica el centrado"
+                )
+                return None
+            # Traslacion en el marco local del padre canonico
+            offset = -(inv_lin @ center_world[:3])
+
+            mat = vtk.vtkMatrix4x4()
+            mat.Identity()
+            mat.SetElement(0, 3, float(offset[0]))
+            mat.SetElement(1, 3, float(offset[1]))
+            mat.SetElement(2, 3, float(offset[2]))
+
+            if canonical_parent is not None:
+                transformNode.SetAndObserveTransformNodeID(canonical_parent.GetID())
+            else:
+                transformNode.SetAndObserveTransformNodeID(None)
+            transformNode.SetMatrixTransformToParent(mat)
+
+            # --- Targets a mover ---
+            targets = []
+            if structureNode is not None:
+                targets.append(structureNode)
+            if referenceNode is not None:
+                targets.append(referenceNode)
+            body_lm = self._findBodyLabelmap()
+            if body_lm is not None:
+                targets.append(body_lm)
+            patient = slicer.mrmlScene.GetFirstNodeByName("Paciente")
+            if patient is not None:
+                targets.append(patient)
+            try:
+                collection = slicer.mrmlScene.GetNodesByClass(
+                    "vtkMRMLLabelMapVolumeNode"
+                )
+                for i in range(collection.GetNumberOfItems()):
+                    node = collection.GetItemAsObject(i)
+                    if node is None:
+                        continue
+                    name = node.GetName() or ""
+                    if name.startswith(_PREFIX_INDIVIDUAL) or name.startswith(
+                        _NAME_COMBINED
+                    ):
+                        targets.append(node)
+            except Exception:
+                pass
+
+            parent_id = (
+                canonical_parent.GetID() if canonical_parent is not None else None
+            )
+            ct_id = transformNode.GetID()
+            applied = 0
+            skipped = []
+            seen_ids = set()
+            for node in targets:
+                if node is None:
+                    continue
+                try:
+                    nid = node.GetID()
+                except Exception:
+                    continue
+                if nid in seen_ids:
+                    continue
+                seen_ids.add(nid)
+                name = node.GetName() or nid
+                # Nunca mover la geometria fija del simulador PHITS
+                if name in ("Conos_Pared_Reactor", "Cono"):
+                    continue
+                node_chain = self._transformChain(node)
+                if any(t.GetID() == ct_id for t in node_chain):
+                    # Ya estaba bajo el transform de centrado: se mueve solo
+                    applied += 1
+                    continue
+                prev_parent_id = node.GetTransformNodeID()
+                if prev_parent_id != parent_id:
+                    skipped.append(name)
+                    continue
+                if prev_parent_id:
+                    try:
+                        transformNode.SetNodeReferenceID(
+                            f"{_NAME_CENTER_TRANSFORM}_prev_{nid}", prev_parent_id
+                        )
+                    except Exception:
+                        pass
+                node.SetAndObserveTransformNodeID(ct_id)
+                applied += 1
+
+            if skipped:
+                _log(
+                    "centerBody: nodos omitidos por transform padre incompatible: "
+                    + ", ".join(skipped)
+                )
+
+            # Bounds finales (RAS mundo) del BODY ya centrado.
+            # `bounds_local` ya esta en el frame RAS local del nodo, por lo que
+            # solo hay que aplicarle la cadena de transforms (no la matriz
+            # IJK->RAS, que ya se aplico al calcular el tight bbox).
+            mat_np = np.asarray(
+                slicer.util.arrayFromVTKMatrix(mat), dtype=np.float64
+            ).reshape((4, 4))
+            world_chain = self._chainMatrix(
+                final_chain, overrideNode=transformNode, overrideMat=mat_np
+            )
+            final_bounds = self._boundsFromLocal(bounds_local, world_chain)
+
+            _log(
+                f"centerBody: BODY '{segment_name}' ({source}) offset="
+                f"{tuple(float(v) for v in offset)} nodos movidos={applied}"
+            )
+
+            return {
+                "offset": (
+                    float(offset[0]),
+                    float(offset[1]),
+                    float(offset[2]),
+                ),
+                "offset_world": (
+                    float(-center_world[0]),
+                    float(-center_world[1]),
+                    float(-center_world[2]),
+                ),
+                "bounds": final_bounds,
+                "bounds_local": bounds_local,
+                "n_nodes": applied,
+                "transform_name": _NAME_CENTER_TRANSFORM,
+                "segment_name": segment_name or "",
+                "source": source or "",
+                "skipped": skipped,
+            }
+        except Exception:
+            _log("centerBody: error:\n" + traceback.format_exc())
+            return None
+
+    def uncenterBody(self):
+        """Quita el transform de centrado a los nodos que lo usan y lo elimina.
+
+        Devuelve el numero de nodos liberados.
+        """
+        import traceback
+
+        transformNode = slicer.mrmlScene.GetFirstNodeByName(_NAME_CENTER_TRANSFORM)
+        if transformNode is None:
+            _log("uncenterBody: no existe el transform de centrado")
+            return 0
+
+        ct_id = transformNode.GetID()
+        released = 0
+        try:
+            nodes = slicer.mrmlScene.GetNodes()
+            for i in range(nodes.GetNumberOfItems()):
+                node = nodes.GetItemAsObject(i)
+                if node is None:
+                    continue
+                try:
+                    if node.GetTransformNodeID() != ct_id:
+                        continue
+                except Exception:
+                    continue
+                # Restaurar el transform padre original (guardado al centrar)
+                prev_id = None
+                try:
+                    prev_id = transformNode.GetNodeReferenceID(
+                        f"{_NAME_CENTER_TRANSFORM}_prev_{node.GetID()}"
+                    )
+                except Exception:
+                    prev_id = None
+                node.SetAndObserveTransformNodeID(prev_id if prev_id else None)
+                released += 1
+            slicer.mrmlScene.RemoveNode(transformNode)
+        except Exception:
+            _log("uncenterBody: error:\n" + traceback.format_exc())
+        _log(f"uncenterBody: {released} nodos liberados")
+        return released
 
     def _modelToWorldPolyData(self, model):
         """Devuelve el polydata del modelo transformado a world (o None)."""
