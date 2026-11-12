@@ -5,6 +5,7 @@
 
 import os, json, logging
 import vtk, qt, ctk, slicer
+from vtk.util.numpy_support import numpy_to_vtk
 from slicer.ScriptedLoadableModule import *
 import numpy as np
 import re
@@ -2566,9 +2567,11 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
         table.RemoveAllColumns()
 
         def col(name, values):
-            c = table.AddColumn()
-            c.SetName(name)
-            c.SetValues([float(v) for v in values])
+            # AddColumn() sin argumentos devuelve vtkStringArray; para numericos
+            # hay que pasar un vtkDoubleArray construido desde numpy.
+            arr = numpy_to_vtk(np.asarray(values, dtype=np.float64), deep=1)
+            arr.SetName(name)
+            table.AddColumn(arr)
 
         col("tir_min", res["tir_values"])
         col("TCP", res["tcp"])
