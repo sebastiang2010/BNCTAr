@@ -173,6 +173,151 @@ def _encadenarSlicesSlice33():
         _log(f"Error encadenando slices: {e}")
 
 
+# ------------------------------------------------------------------
+# Fondo celeste de las vistas 2D (Red / Yellow / Green)
+# ------------------------------------------------------------------
+
+# Color celeste (r, g, b) en rango [0, 1] para el fondo de las vistas 2D.
+_SLICE_BG_CELESTE = (0.7, 0.9, 1.0)
+
+# Nombres de las vistas 2D de Slicer.
+_SLICE_VIEW_NAMES = ("Red", "Yellow", "Green")
+
+
+def _logCeleste(msg):
+    """Log del modulo: archivo de debug local (_bnct_debug.txt) + consola de Slicer."""
+    try:
+        _log(msg)
+    except Exception:
+        pass
+    try:
+        logging.info(msg)
+    except Exception:
+        pass
+    try:
+        print(msg)
+    except Exception:
+        pass
+
+
+def _callLater(callback, delayMs=0):
+    """Ejecuta callback en el proximo ciclo del event loop de Qt.
+
+    slicer.app.callLater no tiene la misma firma en todas las versiones de
+    Slicer, por eso se prueban ambas variantes de argumentos y, si ninguna
+    funciona, se usa QTimer.singleShot como respaldo."""
+    try:
+        app = slicer.app
+    except Exception:
+        app = None
+    if app is not None:
+        try:
+            app.callLater(callback, delayMs)
+            return True
+        except TypeError:
+            try:
+                app.callLater(delayMs, callback)
+                return True
+            except Exception:
+                pass
+        except Exception:
+            pass
+    try:
+        qt.QTimer.singleShot(delayMs, callback)
+        return True
+    except Exception as e:
+        _logCeleste(f"BNCT: no se pudo programar la tarea diferida: {e}")
+        return False
+
+
+def _setSliceBackgroundCeleste(r=None, g=None, b=None):
+    """Fija el fondo celeste de las 3 vistas 2D (Red, Yellow, Green).
+
+    Usa el mismo patron que _encadenarSlicesSlice33(): layoutManager ->
+    sliceWidget(name) -> mrmlSliceNode(). Como garantia visual tambien se
+    fuerza el color en el renderer del slice view.
+
+    Es idempotente: se puede llamar varias veces sin efectos secundarios.
+    Devuelve True si se coloreo al menos una vista y False si todavia no hay
+    layout manager o slice widgets disponibles (en ese caso NO lanza excepcion).
+    """
+    if r is None:
+        r, g, b = _SLICE_BG_CELESTE
+    colored = []
+    errors = 0
+    try:
+        layoutManager = slicer.app.layoutManager()
+        if layoutManager is None:
+            _logCeleste(
+                "BNCT: fondo celeste no aplicado todavia: layoutManager no disponible."
+            )
+            return False
+        for name in _SLICE_VIEW_NAMES:
+            try:
+                sw = layoutManager.sliceWidget(name)
+                if sw is None:
+                    continue
+                sn = sw.mrmlSliceNode()
+                if sn is not None:
+                    sn.SetBackgroundColor(r, g, b)
+                # Garantia visual: fijar el color tambien en el renderer.
+                sliceView = sw.sliceView()
+                rw = None
+                renderer = None
+                if sliceView is not None:
+                    rw = sliceView.renderWindow()
+                    if rw is not None:
+                        renderers = rw.GetRenderers()
+                        if renderers is not None:
+                            renderer = renderers.GetFirstRenderer()
+                    if renderer is None:
+                        # Respaldo: el slice view expone su renderer directamente.
+                        getRenderer = getattr(sliceView, "renderer", None)
+                        if callable(getRenderer):
+                            renderer = getRenderer()
+                if renderer is not None:
+                    renderer.SetBackground(r, g, b)
+                    forceRender = getattr(sliceView, "forceRender", None)
+                    if callable(forceRender):
+                        forceRender()
+                    elif rw is not None:
+                        rw.ForceRender()
+                colored.append(name)
+            except Exception as e:
+                errors += 1
+                _logCeleste(
+                    f"BNCT: error aplicando fondo celeste a la vista {name}: {e}"
+                )
+        if colored:
+            _logCeleste(
+                "BNCT: fondo celeste aplicado a las vistas 2D: "
+                + ", ".join(colored)
+                + f" (errores: {errors})"
+            )
+            return True
+        _logCeleste(
+            "BNCT: fondo celeste no aplicado: no se encontraron slice widgets "
+            "Red/Yellow/Green."
+        )
+        return False
+    except Exception as e:
+        _logCeleste(f"BNCT: error global aplicando fondo celeste: {e}")
+        return False
+
+
+def _scheduleSliceBackgroundCeleste(delayMs=0, reintentos=2):
+    """Programa la aplicacion del fondo celeste en el proximo ciclo del event loop.
+
+    En setup() el layout manager puede todavia no existir, por eso la rutina
+    se difiere y se reintenta un par de veces si el layout aun no esta listo."""
+    def _aplicar():
+        ok = _setSliceBackgroundCeleste()
+        if not ok and reintentos > 0:
+            _scheduleSliceBackgroundCeleste(delayMs=300, reintentos=reintentos - 1)
+
+    _callLater(_aplicar, delayMs)
+
+
 class BNCT(ScriptedLoadableModule):
     def __init__(self, parent):
         ScriptedLoadableModule.__init__(self, parent)
@@ -253,9 +398,16 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
         )
         self.layout.addStretch(1)
 
+        # Fondo celeste de las vistas 2D (Red/Yellow/Green).
+        # En setup() el layout manager puede todavia no existir, por eso la
+        # aplicacion se difiere al proximo ciclo del event loop.
+        _scheduleSliceBackgroundCeleste()
+
     def enter(self):
         """Se llama cada vez que el usuario abre el modulo: autocarga los niveles."""
         try:
+            # Fondo celeste de las vistas 2D (Red/Yellow/Green).
+            _setSliceBackgroundCeleste()
             if getattr(self, "voxelMappingTable", None) is None:
                 self._removeLegacyMaskNodes()
                 return
