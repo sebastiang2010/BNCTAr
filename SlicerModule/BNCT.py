@@ -68,6 +68,11 @@ _NAME_MASKS_FOLDER = "Mascaras_Organos"
 # Nodo transform (traslacion pura) que centra el BODY del paciente en el origen RAS
 _NAME_CENTER_TRANSFORM = "BNCT_Centrar_BODY"
 
+# Coeficiente del eje X usado para el centrado basado en las dimensiones de la
+# matriz de la imagen. Valor solicitado literalmente por el usuario
+# (shift_x = N_x * 0.075); es configurable desde aqui si se requiere cambiarlo.
+_CENTER_X_COEF = 0.075
+
 # ------------------------------------------------------------------
 # Motor radiobiologico UTCP (capa pura, sin Qt/slicer; testeable)
 # ------------------------------------------------------------------
@@ -1914,10 +1919,12 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
         return (organRow, rbeMapped, volumes)
 
     def onCenterBody(self):
-        """Centra el BODY (segmento o mascara) en el origen RAS.
+        """Centra la imagen de referencia en el origen RAS.
 
         Aplica un transform lineal de traslacion a la CT de referencia, a la
-        segmentacion, a las mascaras del modulo y al modelo 'Paciente'.
+        segmentacion, a las mascaras del modulo y al modelo 'Paciente'. El
+        offset sale de las dimensiones y el spacing de la imagen de
+        referencia (no del bbox del BODY).
         """
         import traceback
 
@@ -1930,20 +1937,52 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
             )
             if result is None:
                 slicer.util.errorDisplay(
-                    "No se pudo determinar el BODY.\n\n"
-                    "Selecciona la imagen de referencia (pestana Dosimetry) y la "
-                    "segmentacion con el segmento BODY (pestana Mascaras).",
+                    "No se pudo centrar la imagen de referencia.\n\n"
+                    "Selecciona la imagen de referencia (pestana Dosimetry).",
                 )
                 return
             offset = result["offset"]
+            dims = result["dims"]
+            spacing = result["spacing"]
+            origin = result.get("origin")
+            img_bounds = result["image_bounds"]
             bounds = result["bounds"]
+            if result["body_found"]:
+                body_line = (
+                    f"BODY '{result['segment_name']}' ({result['source']})"
+                )
+            else:
+                body_line = "BODY: no encontrado en la escena (solo la imagen)."
+            if bounds is None:
+                body_bounds = "Bounds finales BODY: no disponibles.\n"
+            else:
+                body_bounds = (
+                    f"Bounds finales BODY (mm):\n"
+                    f"  X: [{bounds[0]:.3f}, {bounds[1]:.3f}]\n"
+                    f"  Y: [{bounds[2]:.3f}, {bounds[3]:.3f}]\n"
+                    f"  Z: [{bounds[4]:.3f}, {bounds[5]:.3f}]\n"
+                )
+            if origin is None:
+                origin_line = "Origin de la imagen: no disponible\n"
+            else:
+                origin_line = (
+                    f"Origin de la imagen (ox,oy,oz): {origin[0]:.4f}, "
+                    f"{origin[1]:.4f}, {origin[2]:.4f}\n"
+                )
             msg = (
-                f"BODY '{result['segment_name']}' centrado en el origen RAS.\n\n"
-                f"Traslacion (mm): X={offset[0]:.3f}, Y={offset[1]:.3f}, Z={offset[2]:.3f}\n"
-                f"Bounds finales (mm):\n"
-                f"  X: [{bounds[0]:.3f}, {bounds[1]:.3f}]\n"
-                f"  Y: [{bounds[2]:.3f}, {bounds[3]:.3f}]\n"
-                f"  Z: [{bounds[4]:.3f}, {bounds[5]:.3f}]\n"
+                f"{body_line} | Imagen de referencia: "
+                f"{result['reference_name']}\n\n"
+                f"Dimensiones (Nx,Ny,Nz): {dims[0]}, {dims[1]}, {dims[2]}\n"
+                f"Spacing (dx,dy,dz): {spacing[0]:.4f}, {spacing[1]:.4f}, "
+                f"{spacing[2]:.4f}\n"
+                f"{origin_line}"
+                f"Traslacion aplicada (mm): X={offset[0]:.2f}, "
+                f"Y={offset[1]:.2f}, Z={offset[2]:.2f}\n"
+                f"{body_bounds}"
+                f"Bounds finales imagen (mm):\n"
+                f"  X: [{img_bounds[0]:.3f}, {img_bounds[1]:.3f}]\n"
+                f"  Y: [{img_bounds[2]:.3f}, {img_bounds[3]:.3f}]\n"
+                f"  Z: [{img_bounds[4]:.3f}, {img_bounds[5]:.3f}]\n"
                 f"Nodos movidos: {result['n_nodes']}\n"
                 f"Transform: {result['transform_name']}"
             )
@@ -5211,52 +5250,163 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
             float(ras[2].max()),
         ]
 
+    @staticmethod
+    def _volumeDimensions(node):
+        """(nx, ny, nz) del volumen; None si no se puede determinar.
+
+        Usa primero `GetImageData().GetDimensions()` y, como fallback, la
+        forma del array (`slicer.util.arrayFromVolume`), que viene en orden
+        (nz, ny, nx).
+        """
+        if node is None:
+            return None
+        try:
+            img = node.GetImageData()
+            if img is not None:
+                dims = img.GetDimensions()
+                if dims and all(int(v) > 0 for v in dims):
+                    return (int(dims[0]), int(dims[1]), int(dims[2]))
+        except Exception:
+            pass
+        try:
+            arr = slicer.util.arrayFromVolume(node)
+            if arr is not None:
+                shape = np.asarray(arr).shape
+                if len(shape) == 3:
+                    return (int(shape[2]), int(shape[1]), int(shape[0]))
+        except Exception:
+            pass
+        return None
+
+    def _isAxisAlignedIJKToRAS(self, node, tol=1e-6):
+        """True si la matriz IJK->RAS del nodo es diagonal (ejes alineados).
+
+        La formula de centrado asume que el eje indice coincide con el eje
+        RAS. Si la matriz no es diagonal se loguea un WARNING explicito y se
+        devuelve False (el llamador sigue adelante con `target_local`).
+        """
+        try:
+            mat = vtk.vtkMatrix4x4()
+            node.GetIJKToRASMatrix(mat)
+            m = np.asarray(
+                slicer.util.arrayFromVTKMatrix(mat), dtype=np.float64
+            ).reshape((4, 4))
+        except Exception:
+            _log(
+                "centerBody: WARNING no se pudo leer la matriz IJK->RAS; se "
+                "asume que los ejes indice/RAS estan alineados"
+            )
+            return False
+        lin = m[:3, :3]
+        offdiag = lin - np.diag(np.diag(lin))
+        if not np.allclose(offdiag, 0.0, atol=tol):
+            _log(
+                "centerBody: WARNING la matriz IJK->RAS de la imagen de "
+                "referencia no es diagonal (el eje indice no coincide con "
+                "RAS); la formula de centrado asume ejes alineados y se "
+                "aplica de todos modos"
+            )
+            return False
+        return True
+
     def centerBody(self, referenceNode=None, structureNode=None):
-        """Centra el BODY del paciente en el origen RAS (0,0,0).
+        """Centra la imagen de referencia en el origen RAS (0,0,0).
 
         Crea (o reutiliza) un `vtkMRMLLinearTransformNode` con una traslacion
         pura y lo encadena como hijo del transform padre existente (nunca se
-        pisa el padre a ciegas). El offset se calcula con el tight bbox del
-        BODY en la geometria de la CT de referencia.
+        pisa el padre a ciegas).
 
-        Devuelve un dict con 'offset', 'bounds', 'n_nodes', 'transform_name' y
-        'segment_name', o None si no se pudo determinar el BODY.
+        El offset NO sale del tight bbox del BODY sino de las DIMENSIONES y el
+        SPACING de la imagen de referencia:
+
+            shift_x = N_x * _CENTER_X_COEF
+            shift_y = N_y * dy / 2
+            shift_z = N_z * dz / 2
+            target_local = origin + shift
+
+        donde `origin` es `referenceNode.GetOrigin()` (frame RAS local de la
+        imagen). `target_local` es el punto que debe quedar en el origen RAS.
+        Si la imagen tiene un transform padre, la traslacion se compensa con
+        la inversa de la parte lineal de ese padre.
+
+        El BODY (segmento BODY/CUERPO o labelmap `Mascara_BODY`) se sigue
+        detectando para incluirlo entre los targets y reportar sus bounds
+        finales, pero NO interviene en el calculo del offset. Si no se
+        encuentra, el centrado de la imagen sigue funcionando igual.
+
+        Devuelve un dict con 'offset', 'bounds', 'image_bounds', 'dims',
+        'spacing', 'n_nodes', 'transform_name' y 'segment_name', o None si no
+        se pudo determinar la geometria de la imagen de referencia.
         """
         import traceback
 
         try:
             body_array = None
-            geom_node = None
+            body_geom_node = None
+            body_node = None
             segment_name = None
             source = None
 
-            # --- 1) BODY desde la segmentacion ---
+            # --- 0) Imagen de referencia: define dimensiones, spacing, origin
+            #         y la cadena de transforms canonica ---
+            ref = referenceNode
+            if ref is None:
+                ref = self._findReferenceVolume()
+                if ref is not None:
+                    _log(
+                        "centerBody: no hay imagen de referencia seleccionada; "
+                        f"se usa '{ref.GetName()}'"
+                    )
+            if ref is None:
+                _log(
+                    "centerBody: no hay imagen de referencia en la escena; "
+                    "no se puede calcular el centrado"
+                )
+                return None
+
+            dims = self._volumeDimensions(ref)
+            if dims is None:
+                _log(
+                    "centerBody: no se pudieron obtener las dimensiones de la "
+                    f"imagen de referencia '{ref.GetName()}'"
+                )
+                return None
+            spacing = ref.GetSpacing()
+            origin = ref.GetOrigin()
+            nx, ny, nz = (int(dims[0]), int(dims[1]), int(dims[2]))
+            dx, dy, dz = (
+                float(spacing[0]),
+                float(spacing[1]),
+                float(spacing[2]),
+            )
+
+            # La formula asume que el eje indice coincide con el eje RAS.
+            self._isAxisAlignedIJKToRAS(ref)
+
+            # --- 1) BODY desde la segmentacion (solo para targets y bounds) ---
             if structureNode is not None:
                 seg_id, seg_name = self._findBodySegment(structureNode)
                 if seg_id is not None:
-                    ref = referenceNode
-                    if ref is None:
-                        ref = self._findReferenceVolume()
-                    if ref is not None:
+                    arr = None
+                    try:
+                        arr = slicer.util.arrayFromSegmentBinaryLabelmap(
+                            structureNode, seg_id, ref
+                        )
+                    except Exception:
                         arr = None
+                    if arr is None:
                         try:
-                            arr = slicer.util.arrayFromSegmentBinaryLabelmap(
+                            arr = slicer.util.arrayFromSegmentLabelmap(
                                 structureNode, seg_id, ref
                             )
                         except Exception:
                             arr = None
-                        if arr is None:
-                            try:
-                                arr = slicer.util.arrayFromSegmentLabelmap(
-                                    structureNode, seg_id, ref
-                                )
-                            except Exception:
-                                arr = None
-                        if arr is not None:
-                            body_array = np.asarray(arr)
-                            geom_node = ref
-                            segment_name = seg_name
-                            source = "segmentacion"
+                    if arr is not None:
+                        body_array = np.asarray(arr)
+                        body_geom_node = ref
+                        body_node = ref
+                        segment_name = seg_name
+                        source = "segmentacion"
 
             # --- 2) fallback: labelmap BODY del modulo ---
             if body_array is None:
@@ -5265,32 +5415,31 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
                     arr = slicer.util.arrayFromVolume(body_lm)
                     if arr is not None:
                         body_array = np.asarray(arr)
-                        geom_node = body_lm
+                        body_geom_node = body_lm
+                        body_node = body_lm
                         segment_name = body_lm.GetName()
                         source = "labelmap"
                         # Si la CT de referencia comparte la misma geometria
                         # local, se usa como ancla: la CT define el transform
                         # padre que se preserva al encadenar el centrado.
-                        if referenceNode is not None and self._sameIJKToRAS(
-                            body_lm, referenceNode
-                        ):
-                            geom_node = referenceNode
+                        if self._sameIJKToRAS(body_lm, ref):
+                            body_geom_node = ref
 
-            if body_array is None or geom_node is None:
-                _log("centerBody: no se pudo obtener el BODY")
-                return None
-            if referenceNode is None:
+            if body_array is None:
                 _log(
-                    "centerBody: no hay imagen de referencia seleccionada; "
-                    "la CT no sera movida"
+                    "centerBody: no se encontro el BODY; se centra igual la "
+                    "imagen de referencia"
                 )
 
-            bounds_local, center_local = self._bodyTightBoundsRAS(
-                body_array, geom_node
+            # --- 3) Offset a partir de dimensiones / spacing / origin ---
+            shift_x = nx * _CENTER_X_COEF
+            shift_y = ny * dy / 2.0
+            shift_z = nz * dz / 2.0
+            target_local = (
+                float(origin[0]) + shift_x,
+                float(origin[1]) + shift_y,
+                float(origin[2]) + shift_z,
             )
-            if bounds_local is None:
-                _log("centerBody: el BODY esta vacio o no es 3D")
-                return None
 
             # --- Nodo transform de centrado (reutilizable) ---
             transformNode = slicer.mrmlScene.GetFirstNodeByName(_NAME_CENTER_TRANSFORM)
@@ -5304,7 +5453,7 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
                     "vtkMRMLLinearTransformNode", _NAME_CENTER_TRANSFORM
                 )
 
-            chain = self._transformChain(geom_node)
+            chain = self._transformChain(ref)
             ct_index = None
             for i, tnode in enumerate(chain):
                 if tnode.GetID() == transformNode.GetID():
@@ -5317,23 +5466,21 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
                 canonical_parent = chain[0] if chain else None
                 above = chain
                 below = []
-                final_chain = [transformNode] + chain
             else:
                 canonical_parent = (
                     chain[ct_index + 1] if ct_index + 1 < len(chain) else None
                 )
                 above = chain[ct_index + 1 :]
                 below = chain[:ct_index]
-                final_chain = chain
 
-            # Centro del BODY en mundo, sin el efecto del transform de centrado
+            # Punto objetivo en mundo, sin el efecto del transform de centrado
             A = self._chainMatrix(above)
             B = self._chainMatrix(below)
-            center_vec = np.array(
-                [center_local[0], center_local[1], center_local[2], 1.0],
+            target_vec = np.array(
+                [target_local[0], target_local[1], target_local[2], 1.0],
                 dtype=np.float64,
             )
-            center_world = A @ (B @ center_vec)
+            target_world = A @ (B @ target_vec)
             try:
                 inv_lin = np.linalg.inv(A[:3, :3])
             except np.linalg.LinAlgError:
@@ -5343,7 +5490,7 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
                 )
                 return None
             # Traslacion en el marco local del padre canonico
-            offset = -(inv_lin @ center_world[:3])
+            offset = -(inv_lin @ target_world[:3])
 
             mat = vtk.vtkMatrix4x4()
             mat.Identity()
@@ -5361,10 +5508,10 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
             targets = []
             if structureNode is not None:
                 targets.append(structureNode)
-            if referenceNode is not None:
-                targets.append(referenceNode)
+            if ref is not None:
+                targets.append(ref)
             body_lm = self._findBodyLabelmap()
-            if body_lm is not None:
+            if body_lm is not None and source is not None:
                 targets.append(body_lm)
             patient = slicer.mrmlScene.GetFirstNodeByName("Paciente")
             if patient is not None:
@@ -5431,20 +5578,46 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
                     + ", ".join(skipped)
                 )
 
-            # Bounds finales (RAS mundo) del BODY ya centrado.
-            # `bounds_local` ya esta en el frame RAS local del nodo, por lo que
-            # solo hay que aplicarle la cadena de transforms (no la matriz
-            # IJK->RAS, que ya se aplico al calcular el tight bbox).
+            # --- Bounds finales (RAS mundo) post-transform ---
             mat_np = np.asarray(
                 slicer.util.arrayFromVTKMatrix(mat), dtype=np.float64
             ).reshape((4, 4))
-            world_chain = self._chainMatrix(
-                final_chain, overrideNode=transformNode, overrideMat=mat_np
+
+            # Imagen de referencia (post-transform)
+            image_bounds_local = [
+                float(origin[0]) - dx / 2.0,
+                float(origin[0]) + (nx - 0.5) * dx,
+                float(origin[1]) - dy / 2.0,
+                float(origin[1]) + (ny - 0.5) * dy,
+                float(origin[2]) - dz / 2.0,
+                float(origin[2]) + (nz - 0.5) * dz,
+            ]
+            image_chain = self._chainMatrix(
+                self._transformChain(ref),
+                overrideNode=transformNode,
+                overrideMat=mat_np,
             )
-            final_bounds = self._boundsFromLocal(bounds_local, world_chain)
+            image_bounds = self._boundsFromLocal(image_bounds_local, image_chain)
+
+            # BODY (post-transform). El tight bbox se usa SOLO para reportar
+            # los bounds finales: ya no participa en el calculo del offset.
+            bounds_local = None
+            final_bounds = None
+            if body_array is not None and body_geom_node is not None:
+                bounds_local, _ = self._bodyTightBoundsRAS(
+                    body_array, body_geom_node
+                )
+                if bounds_local is not None:
+                    body_chain = self._chainMatrix(
+                        self._transformChain(body_node),
+                        overrideNode=transformNode,
+                        overrideMat=mat_np,
+                    )
+                    final_bounds = self._boundsFromLocal(bounds_local, body_chain)
 
             _log(
-                f"centerBody: BODY '{segment_name}' ({source}) offset="
+                f"centerBody: imagen '{ref.GetName()}' dims={dims} "
+                f"spacing={(dx, dy, dz)} offset="
                 f"{tuple(float(v) for v in offset)} nodos movidos={applied}"
             )
 
@@ -5455,14 +5628,32 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
                     float(offset[2]),
                 ),
                 "offset_world": (
-                    float(-center_world[0]),
-                    float(-center_world[1]),
-                    float(-center_world[2]),
+                    float(-target_world[0]),
+                    float(-target_world[1]),
+                    float(-target_world[2]),
                 ),
                 "bounds": final_bounds,
                 "bounds_local": bounds_local,
+                "image_bounds": image_bounds,
+                "image_bounds_local": image_bounds_local,
+                "dims": (nx, ny, nz),
+                "spacing": (dx, dy, dz),
+                "origin": (
+                    float(origin[0]),
+                    float(origin[1]),
+                    float(origin[2]),
+                ),
+                "shift": (float(shift_x), float(shift_y), float(shift_z)),
+                "target_local": target_local,
+                "target_world": (
+                    float(target_world[0]),
+                    float(target_world[1]),
+                    float(target_world[2]),
+                ),
+                "body_found": bool(body_array is not None),
                 "n_nodes": applied,
                 "transform_name": _NAME_CENTER_TRANSFORM,
+                "reference_name": ref.GetName() or "",
                 "segment_name": segment_name or "",
                 "source": source or "",
                 "skipped": skipped,
