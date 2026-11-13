@@ -1969,6 +1969,29 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
                     f"Origin de la imagen (ox,oy,oz): {origin[0]:.4f}, "
                     f"{origin[1]:.4f}, {origin[2]:.4f}\n"
                 )
+            # Matriz IJK->RAS de la referencia: si no es diagonal, la imagen
+            # tiene orientacion oblicua (CT DICOM con ImageOrientationPatient
+            # != identidad). El angulo NO viene del transform de centrado.
+            ijk_to_ras = result.get("ijk_to_ras")
+            axis_aligned = result.get("axis_aligned", True)
+            if ijk_to_ras is not None:
+                mat_lines = "\n".join(
+                    "    [" + ", ".join(f"{v: .6f}" for v in row) + "]"
+                    for row in ijk_to_ras
+                )
+                mat_line = f"Matriz IJK->RAS de la referencia:\n{mat_lines}\n"
+                if not axis_aligned:
+                    mat_line += (
+                        "AVISO: la matriz IJK->RAS NO es diagonal (orientacion "
+                        "oblicua del paciente, tipico de un CT DICOM con "
+                        "ImageOrientationPatient distinto de la identidad).\n"
+                        "El angulo proviene de la imagen, NO del transform de "
+                        "centrado (que es traslacion pura).\n"
+                    )
+            else:
+                mat_line = (
+                    "Matriz IJK->RAS de la referencia: no disponible\n"
+                )
             msg = (
                 f"{body_line} | Imagen de referencia: "
                 f"{result['reference_name']}\n\n"
@@ -1976,6 +1999,7 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
                 f"Spacing (dx,dy,dz): {spacing[0]:.4f}, {spacing[1]:.4f}, "
                 f"{spacing[2]:.4f}\n"
                 f"{origin_line}"
+                f"{mat_line}"
                 f"Traslacion aplicada (mm): X={offset[0]:.2f}, "
                 f"Y={offset[1]:.2f}, Z={offset[2]:.2f}\n"
                 f"{body_bounds}"
@@ -1984,7 +2008,7 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
                 f"  Y: [{img_bounds[2]:.3f}, {img_bounds[3]:.3f}]\n"
                 f"  Z: [{img_bounds[4]:.3f}, {img_bounds[5]:.3f}]\n"
                 f"Nodos movidos: {result['n_nodes']}\n"
-                f"Transform: {result['transform_name']}"
+                f"Transform: {result['transform_name']} (traslacion pura)"
             )
             slicer.util.infoDisplay(msg, windowTitle="Centrar BODY")
         except Exception:
@@ -4916,26 +4940,21 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
             node.SetIJKToRASMatrix(mat)
             node.SetAndObserveTransformNodeID(transformNodeID)
         else:
-            # Comportamiento anterior: intentar aplicar transform multipliéndolo a IJKToRAS
+            # Si la referencia tiene transform padre, conservar la geometria
+            # IJK->RAS local y colgar el labelmap de ese mismo padre. Multiplicar
+            # la matriz local por GetMatrixTransformToWorld y ademas colgar el
+            # nodo del padre aplicaria la transformacion dos veces.
             transformNodeID = referenceNode.GetTransformNodeID()
             transformNode = None
             if transformNodeID:
                 transformNode = slicer.mrmlScene.GetNodeByID(transformNodeID)
             if transformNode:
-                try:
-                    tmat = vtk.vtkMatrix4x4()
-                    transformNode.GetMatrixTransformToWorld(tmat)
-                    finalMat = vtk.vtkMatrix4x4()
-                    vtk.vtkMatrix4x4.Multiply4x4(tmat, mat, finalMat)
-                    node.SetIJKToRASMatrix(finalMat)
-                    _log(
-                        f"_createLabelmapVolume: aplicado transform de '{referenceNode.GetName()}' a '{name}'"
-                    )
-                except Exception as e:
-                    _log(
-                        f"_createLabelmapVolume: no se pudo aplicar transform de '{referenceNode.GetName()}': {e}"
-                    )
-                    node.SetIJKToRASMatrix(mat)
+                node.SetIJKToRASMatrix(mat)
+                node.SetAndObserveTransformNodeID(transformNodeID)
+                _log(
+                    f"_createLabelmapVolume: colgado '{name}' bajo el transform "
+                    f"'{transformNode.GetName()}' sin duplicar la geometria"
+                )
             else:
                 # No hay transform, usar la matriz IJKToRAS original
                 node.SetIJKToRASMatrix(mat)
@@ -5250,6 +5269,33 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
             float(ras[2].max()),
         ]
 
+    def _volumeBoundsLocalRAS(self, ijk_to_ras, nx, ny, nz):
+        """AABB local RAS de las ocho esquinas fisicas del volumen.
+
+        A diferencia de un AABB construido con ``origin +/- spacing``, este
+        calculo respeta matrices IJK->RAS oblicuas: cada esquina IJK se mapea
+        primero con la matriz real de la imagen.
+        """
+        corners = np.array(
+            [
+                [i, j, k, 1.0]
+                for i in (-0.5, float(nx) - 0.5)
+                for j in (-0.5, float(ny) - 0.5)
+                for k in (-0.5, float(nz) - 0.5)
+            ],
+            dtype=np.float64,
+        ).T
+        mat = np.asarray(ijk_to_ras, dtype=np.float64).reshape((4, 4))
+        ras = mat @ corners
+        return [
+            float(ras[0].min()),
+            float(ras[0].max()),
+            float(ras[1].min()),
+            float(ras[1].max()),
+            float(ras[2].min()),
+            float(ras[2].max()),
+        ]
+
     @staticmethod
     def _volumeDimensions(node):
         """(nx, ny, nz) del volumen; None si no se puede determinar.
@@ -5278,20 +5324,39 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
             pass
         return None
 
-    def _isAxisAlignedIJKToRAS(self, node, tol=1e-6):
-        """True si la matriz IJK->RAS del nodo es diagonal (ejes alineados).
+    def _ijkToRASMatrix(self, node):
+        """Matriz IJK->RAS (numpy 4x4) de un nodo; None si no se puede leer.
 
-        La formula de centrado asume que el eje indice coincide con el eje
-        RAS. Si la matriz no es diagonal se loguea un WARNING explicito y se
-        devuelve False (el llamador sigue adelante con `target_local`).
+        La matriz puede ser OBLICUA (rotacion + traslacion): es lo que
+        produce un CT DICOM con `ImageOrientationPatient` distinto de la
+        identidad (gantry inclinado, paciente en posicion oblicua) o con el
+       conversion LPS->RAS que hace Slicer.
         """
+        if node is None:
+            return None
         try:
             mat = vtk.vtkMatrix4x4()
             node.GetIJKToRASMatrix(mat)
-            m = np.asarray(
+            return np.asarray(
                 slicer.util.arrayFromVTKMatrix(mat), dtype=np.float64
             ).reshape((4, 4))
         except Exception:
+            return None
+
+    def _isAxisAlignedIJKToRAS(self, node, tol=1e-6, matrix=None):
+        """True si la matriz IJK->RAS del nodo es diagonal (ejes alineados).
+
+        Una CT DICOM con orientacion oblicua NO es un error: el angulo es la
+        orientacion real del paciente en el gantry. El centrado se calcula
+        con esa matriz (no se asume que IJK == RAS), asi que aqui solo se
+        avisa para que el usuario entienda el angulo que ve.
+        """
+        m = (
+            self._ijkToRASMatrix(node)
+            if matrix is None
+            else np.asarray(matrix, dtype=np.float64).reshape((4, 4))
+        )
+        if m is None:
             _log(
                 "centerBody: WARNING no se pudo leer la matriz IJK->RAS; se "
                 "asume que los ejes indice/RAS estan alineados"
@@ -5301,10 +5366,10 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
         offdiag = lin - np.diag(np.diag(lin))
         if not np.allclose(offdiag, 0.0, atol=tol):
             _log(
-                "centerBody: WARNING la matriz IJK->RAS de la imagen de "
-                "referencia no es diagonal (el eje indice no coincide con "
-                "RAS); la formula de centrado asume ejes alineados y se "
-                "aplica de todos modos"
+                "centerBody: la matriz IJK->RAS de la imagen de referencia NO "
+                "es diagonal (orientacion oblicua del paciente); el punto "
+                "objetivo se calcula con esa matriz y el transform de "
+                "centrado sigue siendo una traslacion pura"
             )
             return False
         return True
@@ -5322,12 +5387,28 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
             shift_x = N_x * _CENTER_X_COEF
             shift_y = N_y * dy / 2
             shift_z = N_z * dz / 2
-            target_local = origin + shift
 
-        donde `origin` es `referenceNode.GetOrigin()` (frame RAS local de la
-        imagen). `target_local` es el punto que debe quedar en el origen RAS.
-        Si la imagen tiene un transform padre, la traslacion se compensa con
-        la inversa de la parte lineal de ese padre.
+        El punto que debe quedar en el origen RAS se calcula con la matriz
+        IJK->RAS REAL de la imagen de referencia (puede ser oblicua):
+
+            M            = GetIJKToRASMatrix(ref)      # IJK -> RAS local
+            R_loc        = M[:3, :3]
+            center_local = M @ (N_x/2, N_y/2, N_z/2, 1)
+            delta_x      = N_x * _CENTER_X_COEF - N_x * dx / 2
+            unit_x_local = R_loc[:, 0] / ||R_loc[:, 0]||
+            target_local = center_local[:3] + delta_x * unit_x_local
+
+        Con una matriz diagonal (imagen alineada) esto reproduce exactamente
+        el caso historico `origin + (shift_x, shift_y, shift_z)`, y con una
+        matriz oblicua el punto objetivo queda en el origen RAS sin suponer
+        que los ejes IJK esten alineados con RAS.
+
+        `target_local` es un punto del frame local (RAS local de la imagen,
+        antes de los transforms padre). Si la imagen tiene un transform padre,
+        la traslacion se compensa con la inversa de la parte lineal de ese
+        padre. La matriz del transform de centrado es SIEMPRE una traslacion
+        pura (3x3 = identidad): cualquier rotacion que se vea proviene del
+        IJK->RAS de la imagen (orientacion DICOM), no de este transform.
 
         El BODY (segmento BODY/CUERPO o labelmap `Mascara_BODY`) se sigue
         detectando para incluirlo entre los targets y reportar sus bounds
@@ -5380,8 +5461,33 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
                 float(spacing[2]),
             )
 
-            # La formula asume que el eje indice coincide con el eje RAS.
-            self._isAxisAlignedIJKToRAS(ref)
+            # Matriz IJK->RAS local de la imagen de referencia. Puede ser
+            # OBLICUA (rotacion + traslacion): es lo que ocurre con un CT
+            # DICOM con ImageOrientationPatient distinto de la identidad.
+            ijk_to_ras = self._ijkToRASMatrix(ref)
+            if ijk_to_ras is None:
+                _log(
+                    "centerBody: WARNING no se pudo leer la matriz IJK->RAS de "
+                    f"'{ref.GetName()}'; se usa una matriz diagonalFallback "
+                    "construida con origin+spacing"
+                )
+                ijk_to_ras = np.eye(4, dtype=np.float64)
+                ijk_to_ras[0, 0] = dx
+                ijk_to_ras[1, 1] = dy
+                ijk_to_ras[2, 2] = dz
+                ijk_to_ras[0, 3] = float(origin[0])
+                ijk_to_ras[1, 3] = float(origin[1])
+                ijk_to_ras[2, 3] = float(origin[2])
+            axis_aligned = self._isAxisAlignedIJKToRAS(ref, matrix=ijk_to_ras)
+            if not np.allclose(
+                ijk_to_ras[:3, 3],
+                np.array([origin[0], origin[1], origin[2]], dtype=np.float64),
+                atol=1e-6,
+            ):
+                _log(
+                    "centerBody: WARNING la traslacion de la matriz IJK->RAS "
+                    "no coincide con GetOrigin(); se usa la matriz"
+                )
 
             # --- 1) BODY desde la segmentacion (solo para targets y bounds) ---
             if structureNode is not None:
@@ -5431,14 +5537,73 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
                     "imagen de referencia"
                 )
 
-            # --- 3) Offset a partir de dimensiones / spacing / origin ---
+            # --- 3) Punto objetivo a partir de dimensiones / spacing / matriz
+            #         IJK->RAS (robusto a matrices OBLICUAS) ---
             shift_x = nx * _CENTER_X_COEF
             shift_y = ny * dy / 2.0
             shift_z = nz * dz / 2.0
+
+            r_loc = ijk_to_ras[:3, :3]
+            col_norm = np.linalg.norm(r_loc, axis=0)
+            # Eje +X local (columna 0 de la parte lineal) expresado en RAS.
+            unit_x_local = np.array([1.0, 0.0, 0.0], dtype=np.float64)
+            if col_norm[0] > 1e-12:
+                unit_x_local = r_loc[:, 0] / col_norm[0]
+            else:
+                _log(
+                    "centerBody: WARNING la columna X de la matriz IJK->RAS es "
+                    "degenerada; se usa el eje +X de RAS para la correccion"
+                )
+            # Centro del array en el frame local (RAS local de la imagen).
+            center_local = ijk_to_ras @ np.array(
+                [nx / 2.0, ny / 2.0, nz / 2.0, 1.0], dtype=np.float64
+            )
+
+            dx_valid = bool(np.isfinite(dx) and dx > 0.0)
+            if dx_valid:
+                delta_x = nx * _CENTER_X_COEF - nx * dx / 2.0
+            else:
+                delta_x = nx * _CENTER_X_COEF
+                _log(
+                    "centerBody: WARNING spacing dx invalido (%r); se usa "
+                    f"delta_x = N_x*_CENTER_X_COEF = {delta_x:.6g} sobre el "
+                    "centro del array"
+                )
+
+            # `center_local` ya es un punto RAS local (homogeneo). La correccion
+            # del factor X se expresa en mm sobre el eje +X local normalizado.
+            # Esta formulacion reproduce el caso alineado exactamente y es
+            # consistente tambien cuando la matriz IJK->RAS es oblicua.
+            target_local_v = center_local[:3] + delta_x * unit_x_local
+            if dx_valid and not np.isclose(col_norm[0], dx, rtol=1e-6, atol=1e-6):
+                _log(
+                    "centerBody: WARNING la norma de la columna X de la "
+                    f"matriz IJK->RAS ({col_norm[0]:.6g}) difiere del "
+                    f"spacing dx ({dx:.6g}); se usa el eje local normalizado "
+                    "para la correccion X"
+                )
+
+            # Indices IJK equivalentes del punto objetivo (solo informative).
+            try:
+                target_ijk = (
+                    np.linalg.inv(ijk_to_ras)
+                    @ np.array(
+                        [
+                            target_local_v[0],
+                            target_local_v[1],
+                            target_local_v[2],
+                            1.0,
+                        ],
+                        dtype=np.float64,
+                    )
+                )[:3]
+            except np.linalg.LinAlgError:
+                target_ijk = np.array([np.nan, np.nan, np.nan])
+
             target_local = (
-                float(origin[0]) + shift_x,
-                float(origin[1]) + shift_y,
-                float(origin[2]) + shift_z,
+                float(target_local_v[0]),
+                float(target_local_v[1]),
+                float(target_local_v[2]),
             )
 
             # --- Nodo transform de centrado (reutilizable) ---
@@ -5583,15 +5748,11 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
                 slicer.util.arrayFromVTKMatrix(mat), dtype=np.float64
             ).reshape((4, 4))
 
-            # Imagen de referencia (post-transform)
-            image_bounds_local = [
-                float(origin[0]) - dx / 2.0,
-                float(origin[0]) + (nx - 0.5) * dx,
-                float(origin[1]) - dy / 2.0,
-                float(origin[1]) + (ny - 0.5) * dy,
-                float(origin[2]) - dz / 2.0,
-                float(origin[2]) + (nz - 0.5) * dz,
-            ]
+            # Imagen de referencia (post-transform). El AABB local se obtiene
+            # desde las esquinas IJK reales para no asumir ejes RAS alineados.
+            image_bounds_local = self._volumeBoundsLocalRAS(
+                ijk_to_ras, nx, ny, nz
+            )
             image_chain = self._chainMatrix(
                 self._transformChain(ref),
                 overrideNode=transformNode,
@@ -5618,7 +5779,8 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
             _log(
                 f"centerBody: imagen '{ref.GetName()}' dims={dims} "
                 f"spacing={(dx, dy, dz)} offset="
-                f"{tuple(float(v) for v in offset)} nodos movidos={applied}"
+                f"{tuple(float(v) for v in offset)} nodos movidos={applied} "
+                f"oblicua={not axis_aligned}"
             )
 
             return {
@@ -5645,10 +5807,25 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
                 ),
                 "shift": (float(shift_x), float(shift_y), float(shift_z)),
                 "target_local": target_local,
+                "target_ijk": (
+                    float(target_ijk[0]),
+                    float(target_ijk[1]),
+                    float(target_ijk[2]),
+                ),
                 "target_world": (
                     float(target_world[0]),
                     float(target_world[1]),
                     float(target_world[2]),
+                ),
+                "ijk_to_ras": [
+                    [float(v) for v in row] for row in np.asarray(ijk_to_ras)
+                ],
+                "axis_aligned": bool(axis_aligned),
+                "delta_x": float(delta_x),
+                "unit_x_local": (
+                    float(unit_x_local[0]),
+                    float(unit_x_local[1]),
+                    float(unit_x_local[2]),
                 ),
                 "body_found": bool(body_array is not None),
                 "n_nodes": applied,
