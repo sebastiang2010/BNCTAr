@@ -77,10 +77,10 @@ _CENTER_PREV_MATRIX_ATTRIBUTE = "BNCT.Center.PreviousIJKToRAS"
 _CENTER_PREV_PARENT_ATTRIBUTE = "BNCT.Center.PreviousParent"
 _CENTER_AUX_TRANSFORM_ATTRIBUTE = "BNCT.Center.AuxiliaryTransform"
 
-# Centrado basado en las dimensiones y el spacing de la imagen.
-# En los tres ejes el desplazamiento lleva el centro del rango fisico
-# [0, N * d] al origen, o sea N*d/2 por eje. No hay coeficiente arbitrario
-# en X: el rango en X va de 0 a N_x * dx, igual que Y y Z.
+# Coeficiente del eje X usado para el centrado basado en las dimensiones de la
+# matriz de la imagen. Valor solicitado literalmente por el usuario
+# (shift_x = N_x * 0.075); es configurable desde aqui si se requiere cambiarlo.
+_CENTER_X_COEF = 0.075
 
 # ------------------------------------------------------------------
 # Motor radiobiologico UTCP (capa pura, sin Qt/slicer; testeable)
@@ -5503,7 +5503,7 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
 
         El desplazamiento solicitado se deriva de las dimensiones y el spacing:
 
-            shift_x = N_x * dx / 2
+            shift_x = N_x * _CENTER_X_COEF
             shift_y = N_y * dy / 2
             shift_z = N_z * dz / 2
 
@@ -5658,13 +5658,13 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
 
             # --- 3) Movimiento en RAS, calculado directamente en el mundo ---
             # El desplazamiento solicitado es:
-            #   shift_x = N_x * dx / 2, shift_y = N_y * dy / 2,
+            #   shift_x = N_x * 0.075, shift_y = N_y * dy / 2,
             #   shift_z = N_z * dz / 2.
             # El origen final de la imagen en RAS es (-shift_x, -shift_y,
             # -shift_z). Se calcula el movimiento RESTANTE desde la posicion
             # RAS actual; no se convierte LPS<->RAS ni se mezclan frames.
             shift = np.array(
-                [nx * dx / 2.0, ny * dy / 2.0, nz * dz / 2.0],
+                [nx * _CENTER_X_COEF, ny * dy / 2.0, nz * dz / 2.0],
                 dtype=np.float64,
             )
             desired_origin_world = -shift
