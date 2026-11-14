@@ -5657,17 +5657,71 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
                 )
 
             # --- 3) Movimiento en RAS, calculado directamente en el mundo ---
-            # El desplazamiento solicitado es:
-            #   shift_x = N_x * 0.075, shift_y = N_y * dy / 2,
-            #   shift_z = N_z * dz / 2.
-            # El origen final de la imagen en RAS es (-shift_x, -shift_y,
-            # -shift_z). Se calcula el movimiento RESTANTE desde la posicion
-            # RAS actual; no se convierte LPS<->RAS ni se mezclan frames.
-            shift = np.array(
-                [nx * _CENTER_X_COEF, ny * dy / 2.0, nz * dz / 2.0],
-                dtype=np.float64,
-            )
-            desired_origin_world = -shift
+            # El objetivo es que el BODY quede en:
+            #   X: rango [0, N_x*dx]  -> borde izquierdo del cuerpo en x=0
+            #   Y: rango [-y/2, +y/2] -> centrado en y=0
+            #   Z: rango [-z/2, +z/2] -> centrado en z=0
+            # Se calcula directamente desde la posicion RAS actual del cuerpo;
+            # no se convierte LPS<->RAS ni se mezclan frames.
+            movement_ras = np.zeros(3, dtype=np.float64)
+
+            if body_array is not None:
+                body_arr = np.asarray(body_array)
+                ks, js, iss = np.nonzero(body_arr > 0)
+                if ks.size > 0:
+                    i_min, i_max = int(iss.min()), int(iss.max())
+                    j_min, j_max = int(js.min()), int(js.max())
+                    k_min, k_max = int(ks.min()), int(ks.max())
+
+                    ijk_to_ras_np = np.asarray(
+                        slicer.util.arrayFromVTKMatrix(ijk_to_ras),
+                        dtype=np.float64,
+                    ).reshape((4, 4))
+                    corners_ijk = np.array(
+                        [
+                            [i_min, j_min, k_min, 1.0],
+                            [i_max, j_min, k_min, 1.0],
+                            [i_min, j_max, k_min, 1.0],
+                            [i_max, j_max, k_min, 1.0],
+                            [i_min, j_min, k_max, 1.0],
+                            [i_max, j_min, k_max, 1.0],
+                            [i_min, j_max, k_max, 1.0],
+                            [i_max, j_max, k_max, 1.0],
+                        ],
+                        dtype=np.float64,
+                    )
+                    corners_ras = (ijk_to_ras_np @ corners_ijk.T)[:3, :]
+
+                    x_min_ras = float(corners_ras[0].min())
+                    y_center_ras = float(
+                        (corners_ras[1].min() + corners_ras[1].max()) / 2.0
+                    )
+                    z_center_ras = float(
+                        (corners_ras[2].min() + corners_ras[2].max()) / 2.0
+                    )
+
+                    ref_chain = self._transformChain(ref)
+                    ref_world_matrix = self._chainMatrix(ref_chain)
+
+                    x_min_world = float(
+                        ref_world_matrix[:3, :3]
+                        @ np.array([x_min_ras, 0.0, 0.0], dtype=np.float64)
+                        + ref_world_matrix[:3, 3]
+                    )
+                    y_center_world = float(
+                        ref_world_matrix[:3, :3]
+                        @ np.array([0.0, y_center_ras, 0.0], dtype=np.float64)
+                        + ref_world_matrix[:3, 3]
+                    )
+                    z_center_world = float(
+                        ref_world_matrix[:3, :3]
+                        @ np.array([0.0, 0.0, z_center_ras], dtype=np.float64)
+                        + ref_world_matrix[:3, 3]
+                    )
+
+                    movement_ras[0] = -x_min_world
+                    movement_ras[1] = -y_center_world
+                    movement_ras[2] = -z_center_world
 
             ref_chain = self._transformChain(ref)
             ref_world_matrix = self._chainMatrix(ref_chain)
@@ -5677,7 +5731,7 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
                 ref_world_matrix[:3, :3] @ origin_ras
                 + ref_world_matrix[:3, 3]
             )
-            movement_ras = desired_origin_world - origin_world
+            desired_origin_world = origin_world + movement_ras
 
             # --- Nodo transform de centrado (traslacion pura) ---
             # El transform se usa para nodos VECTOR (segmentacion/modelos). Los
