@@ -68,6 +68,15 @@ _NAME_MASKS_FOLDER = "Mascaras_Organos"
 # Nodo transform (traslacion pura) que centra el BODY del paciente en el origen RAS
 _NAME_CENTER_TRANSFORM = "BNCT_Centrar_BODY"
 
+# Atributos MRML para restaurar exactamente la geometria de los nodos afectados.
+# Se guardan en cada nodo (y no solo en el transform) para que "Quitar centrado"
+# tambien funcione si el usuario elimina manualmente el nodo transform.
+_CENTER_ACTIVE_ATTRIBUTE = "BNCT.Center.Active"
+_CENTER_KIND_ATTRIBUTE = "BNCT.Center.Kind"
+_CENTER_PREV_MATRIX_ATTRIBUTE = "BNCT.Center.PreviousIJKToRAS"
+_CENTER_PREV_PARENT_ATTRIBUTE = "BNCT.Center.PreviousParent"
+_CENTER_AUX_TRANSFORM_ATTRIBUTE = "BNCT.Center.AuxiliaryTransform"
+
 # Coeficiente del eje X usado para el centrado basado en las dimensiones de la
 # matriz de la imagen. Valor solicitado literalmente por el usuario
 # (shift_x = N_x * 0.075); es configurable desde aqui si se requiere cambiarlo.
@@ -1919,12 +1928,12 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
         return (organRow, rbeMapped, volumes)
 
     def onCenterBody(self):
-        """Centra la imagen de referencia en el origen RAS.
+        """Centra la imagen de referencia con un movimiento RAS puro.
 
-        Aplica un transform lineal de traslacion a la CT de referencia, a la
-        segmentacion, a las mascaras del modulo y al modelo 'Paciente'. El
-        offset sale de las dimensiones y el spacing de la imagen de
-        referencia (no del bbox del BODY).
+        Los rasteres se desplazan ajustando su matriz IJK->RAS; la
+        segmentacion y el modelo 'Paciente' usan un transform lineal de
+        traslacion pura. El movimiento sale de las dimensiones y el spacing
+        de la imagen de referencia (no del bbox del BODY).
         """
         import traceback
 
@@ -1941,10 +1950,11 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
                     "Selecciona la imagen de referencia (pestana Dosimetry).",
                 )
                 return
-            offset = result["offset"]
+            offset = result.get("movement_ras", result["offset"])
             dims = result["dims"]
             spacing = result["spacing"]
             origin = result.get("origin")
+            origin_after = result.get("origin_after", origin)
             img_bounds = result["image_bounds"]
             bounds = result["bounds"]
             if result["body_found"]:
@@ -1966,8 +1976,11 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
                 origin_line = "Origin de la imagen: no disponible\n"
             else:
                 origin_line = (
-                    f"Origin de la imagen (ox,oy,oz): {origin[0]:.4f}, "
+                    f"Origin de la imagen antes (ox,oy,oz): {origin[0]:.4f}, "
                     f"{origin[1]:.4f}, {origin[2]:.4f}\n"
+                    f"Origin de la imagen despues (ox,oy,oz): "
+                    f"{origin_after[0]:.4f}, {origin_after[1]:.4f}, "
+                    f"{origin_after[2]:.4f}\n"
                 )
             # Matriz IJK->RAS de la referencia: si no es diagonal, la imagen
             # tiene orientacion oblicua (CT DICOM con ImageOrientationPatient
@@ -2000,7 +2013,7 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
                 f"{spacing[2]:.4f}\n"
                 f"{origin_line}"
                 f"{mat_line}"
-                f"Traslacion aplicada (mm): X={offset[0]:.2f}, "
+                f"Traslacion aplicada en RAS (mm): X={offset[0]:.2f}, "
                 f"Y={offset[1]:.2f}, Z={offset[2]:.2f}\n"
                 f"{body_bounds}"
                 f"Bounds finales imagen (mm):\n"
@@ -2266,6 +2279,8 @@ class BNCTWidget(ScriptedLoadableModuleWidget):
                 origin=nodes[0].GetOrigin(),
                 spacing=nodes[0].GetSpacing(),
                 transformNodeID=nodes[0].GetTransformNodeID(),
+                ijkToRASMatrix=logic._ijkToRASMatrix(nodes[0]),
+                referenceNode=nodes[0],
             )
             slicer.util.infoDisplay("Dosis Isoefectiva calculada correctamente.")
         except Exception as e:
@@ -3240,6 +3255,10 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
                     final_spacing,
                     vol_name,
                     transformNodeID=refNode.GetTransformNodeID() if refNode else None,
+                    ijkToRASMatrix=(
+                        self._ijkToRASMatrix(refNode) if refNode else None
+                    ),
+                    referenceNode=refNode,
                 )
 
         has_gamma = False
@@ -3267,6 +3286,10 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
                 final_spacing,
                 gamma_name,
                 transformNodeID=refNode.GetTransformNodeID() if refNode else None,
+                ijkToRASMatrix=(
+                    self._ijkToRASMatrix(refNode) if refNode else None
+                ),
+                referenceNode=refNode,
             )
             has_gamma = True
         else:
@@ -3349,6 +3372,8 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
             spacing,
             "Dosis_Fisica_BNCT",
             transformNodeID=nodes[0].GetTransformNodeID(),
+            ijkToRASMatrix=self._ijkToRASMatrix(nodes[0]),
+            referenceNode=nodes[0],
         )
 
         print(f"Dosis Física: max={np.max(phys_dose):.4f}, min={np.min(phys_dose):.4f}")
@@ -3391,6 +3416,8 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
             spacing,
             "Dosis_RBE_BNCT",
             transformNodeID=nodes[0].GetTransformNodeID(),
+            ijkToRASMatrix=self._ijkToRASMatrix(nodes[0]),
+            referenceNode=nodes[0],
         )
 
         print(f"Dosis RBE: max={np.max(rbe_dose):.4f}, min={np.min(rbe_dose):.4f}")
@@ -3413,6 +3440,8 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
         origin=(0, 0, 0),
         spacing=(1, 1, 1),
         transformNodeID=None,
+        ijkToRASMatrix=None,
+        referenceNode=None,
     ):
         """Dosis Isoefectiva = modelo LQ con Lea-Catcheside."""
         if comp_arrays["boro"] is None:
@@ -3514,6 +3543,8 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
             spacing,
             "Dosis_IsoE_BNCT",
             transformNodeID=transformNodeID,
+            ijkToRASMatrix=ijkToRASMatrix,
+            referenceNode=referenceNode,
         )
         print(f"Dosis Isoefectiva: max={np.max(DisoE):.4f}, min={np.min(DisoE):.4f}")
 
@@ -3716,13 +3747,22 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
             "particle": particle,
         }
 
-    def createDoseVolume(self, array, origin, spacing, name, transformNodeID=None):
+    def createDoseVolume(
+        self,
+        array,
+        origin,
+        spacing,
+        name,
+        transformNodeID=None,
+        ijkToRASMatrix=None,
+        referenceNode=None,
+    ):
         """Crea un volumen de dosis con la geometria local dada.
 
-        `origin`/`spacing` son los valores LOCALES del volumen de referencia
-        (la interpolacion tambien usa la matriz IJK->RAS local), por eso el
-        volumen de dosis debe colgar del mismo transform padre que la CT para
-        que no quede desalineado.
+        `origin`/`spacing` son los valores LOCALES del volumen de referencia.
+        Si se proporciona `ijkToRASMatrix`, se copia la matriz completa para
+        conservar tambien la orientacion oblicua del raster. El volumen cuelga
+        del mismo transform padre que la CT, sin aplicar el padre dos veces.
         """
         volumeNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode", name)
 
@@ -3732,9 +3772,34 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
 
         volumeNode.SetOrigin(origin)
         volumeNode.SetSpacing(spacing)
+        if ijkToRASMatrix is not None:
+            self._setIJKToRASMatrix(volumeNode, ijkToRASMatrix)
 
         if transformNodeID:
             volumeNode.SetAndObserveTransformNodeID(transformNodeID)
+
+        # Si la referencia ya estaba centrada, este volumen nace en la misma
+        # geometria final. Se registra como dependiente para que un posterior
+        # "Quitar centrado" lo restaure junto con la referencia.
+        if referenceNode is not None:
+            try:
+                reference_is_centered = (
+                    referenceNode.GetAttribute(_CENTER_ACTIVE_ATTRIBUTE) == "1"
+                )
+                previous_matrix_json = referenceNode.GetAttribute(
+                    _CENTER_PREV_MATRIX_ATTRIBUTE
+                )
+                if reference_is_centered and previous_matrix_json:
+                    previous_matrix = np.asarray(
+                        json.loads(previous_matrix_json), dtype=np.float64
+                    ).reshape((4, 4))
+                    self._markCenteredRaster(
+                        volumeNode,
+                        previous_matrix,
+                        volumeNode.GetTransformNodeID() or "",
+                    )
+            except Exception:
+                pass
 
         print(f"--- Volumen Creado: {name} ---")
         print(f"  Array shape: {array.shape}")
@@ -4958,6 +5023,27 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
             else:
                 # No hay transform, usar la matriz IJKToRAS original
                 node.SetIJKToRASMatrix(mat)
+
+        # Si la referencia ya tiene el desplazamiento horneado en IJK->RAS,
+        # este labelmap nace con la misma geometria. Guardar la matriz previa
+        # permite que "Quitar centrado" lo restaure de forma exacta.
+        try:
+            if referenceNode.GetAttribute(_CENTER_ACTIVE_ATTRIBUTE) == "1":
+                previous_matrix_json = referenceNode.GetAttribute(
+                    _CENTER_PREV_MATRIX_ATTRIBUTE
+                )
+                if previous_matrix_json:
+                    previous_matrix = np.asarray(
+                        json.loads(previous_matrix_json), dtype=np.float64
+                    ).reshape((4, 4))
+                    self._markCenteredRaster(
+                        node,
+                        previous_matrix,
+                        node.GetTransformNodeID() or "",
+                    )
+        except Exception:
+            pass
+
         node.CreateDefaultDisplayNodes()
         display = node.GetDisplayNode()
         if display:
@@ -5343,6 +5429,44 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
         except Exception:
             return None
 
+    def _setIJKToRASMatrix(self, node, matrix):
+        """Escribe una matriz IJK->RAS 4x4 (numpy) en un nodo de volumen."""
+        if node is None or matrix is None:
+            return False
+        vtk_matrix = vtk.vtkMatrix4x4()
+        values = np.asarray(matrix, dtype=np.float64).reshape((4, 4))
+        for row in range(4):
+            for column in range(4):
+                vtk_matrix.SetElement(row, column, float(values[row, column]))
+        node.SetIJKToRASMatrix(vtk_matrix)
+        return True
+
+    def _markCenteredRaster(self, node, previous_matrix, previous_parent=None):
+        """Registra la geometria local previa de un raster centrado.
+
+        Los rasters no se cuelgan del transform de centrado: su desplazamiento
+        queda horneado en la columna de traslacion de IJK->RAS. Guardar la
+        matriz previa en el propio nodo permite que ``uncenterBody`` restaure
+        exactamente su geometria, incluso si el nodo se creo despues de
+        centrar la referencia.
+        """
+        if node is None or previous_matrix is None:
+            return False
+        try:
+            values = np.asarray(previous_matrix, dtype=np.float64).reshape((4, 4))
+            node.SetAttribute(_CENTER_ACTIVE_ATTRIBUTE, "1")
+            node.SetAttribute(_CENTER_KIND_ATTRIBUTE, "raster")
+            node.SetAttribute(
+                _CENTER_PREV_MATRIX_ATTRIBUTE,
+                json.dumps(values.tolist()),
+            )
+            if previous_parent is None:
+                previous_parent = node.GetTransformNodeID() or ""
+            node.SetAttribute(_CENTER_PREV_PARENT_ATTRIBUTE, previous_parent)
+            return True
+        except Exception:
+            return False
+
     def _isAxisAlignedIJKToRAS(self, node, tol=1e-6, matrix=None):
         """True si la matriz IJK->RAS del nodo es diagonal (ejes alineados).
 
@@ -5375,56 +5499,44 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
         return True
 
     def centerBody(self, referenceNode=None, structureNode=None):
-        """Centra la imagen de referencia en el origen RAS (0,0,0).
+        """Centra la imagen de referencia usando un movimiento RAS puro.
 
-        Crea (o reutiliza) un `vtkMRMLLinearTransformNode` con una traslacion
-        pura y lo encadena como hijo del transform padre existente (nunca se
-        pisa el padre a ciegas).
-
-        El offset NO sale del tight bbox del BODY sino de las DIMENSIONES y el
-        SPACING de la imagen de referencia:
+        El desplazamiento solicitado se deriva de las dimensiones y el spacing:
 
             shift_x = N_x * _CENTER_X_COEF
             shift_y = N_y * dy / 2
             shift_z = N_z * dz / 2
 
-        El punto que debe quedar en el origen RAS se calcula con la matriz
-        IJK->RAS REAL de la imagen de referencia (puede ser oblicua):
+        La posicion final deseada del origen local de la imagen es
+        ``(-shift_x, -shift_y, -shift_z)`` en RAS. El movimiento restante se
+        calcula directamente desde la posicion RAS actual, sin conversiones
+        LPS<->RAS.
 
-            M            = GetIJKToRASMatrix(ref)      # IJK -> RAS local
-            R_loc        = M[:3, :3]
-            center_local = M @ (N_x/2, N_y/2, N_z/2, 1)
-            delta_x      = N_x * _CENTER_X_COEF - N_x * dx / 2
-            unit_x_local = R_loc[:, 0] / ||R_loc[:, 0]||
-            target_local = center_local[:3] + delta_x * unit_x_local
-
-        Con una matriz diagonal (imagen alineada) esto reproduce exactamente
-        el caso historico `origin + (shift_x, shift_y, shift_z)`, y con una
-        matriz oblicua el punto objetivo queda en el origen RAS sin suponer
-        que los ejes IJK esten alineados con RAS.
-
-        `target_local` es un punto del frame local (RAS local de la imagen,
-        antes de los transforms padre). Si la imagen tiene un transform padre,
-        la traslacion se compensa con la inversa de la parte lineal de ese
-        padre. La matriz del transform de centrado es SIEMPRE una traslacion
-        pura (3x3 = identidad): cualquier rotacion que se vea proviene del
-        IJK->RAS de la imagen (orientacion DICOM), no de este transform.
+        Los volumenes raster (CT, labelmaps y dosis) NO se cuelgan del
+        transform de centrado: se conserva exactamente su parte 3x3 IJK->RAS
+        y se ajusta solo la columna de traslacion. Asi Slicer no reorienta ni
+        re-muestrea la imagen. Segmentaciones y modelos usan un
+        `vtkMRMLLinearTransformNode` cuya matriz es exactamente ``I | offset``.
 
         El BODY (segmento BODY/CUERPO o labelmap `Mascara_BODY`) se sigue
-        detectando para incluirlo entre los targets y reportar sus bounds
-        finales, pero NO interviene en el calculo del offset. Si no se
-        encuentra, el centrado de la imagen sigue funcionando igual.
+        detectando para reportar sus bounds finales, pero no interviene en el
+        calculo del movimiento. Si no se encuentra, la imagen se centra igual.
 
-        Devuelve un dict con 'offset', 'bounds', 'image_bounds', 'dims',
-        'spacing', 'n_nodes', 'transform_name' y 'segment_name', o None si no
-        se pudo determinar la geometria de la imagen de referencia.
+        Devuelve un dict con la geometria, el movimiento RAS, los bounds y los
+        nodos afectados, o None si no se pudo determinar la geometria.
         """
         import traceback
 
         try:
+            # Normaliza cualquier centrado previo. Esto hace que centrar dos
+            # veces sea idempotente y que el calculo parta siempre de la
+            # geometria original del usuario.
+            self.uncenterBody()
+
             body_array = None
             body_geom_node = None
             body_node = None
+            body_labelmap_node = None
             segment_name = None
             source = None
 
@@ -5460,6 +5572,12 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
                 float(spacing[1]),
                 float(spacing[2]),
             )
+            if not all(np.isfinite(value) and value > 0.0 for value in (dx, dy, dz)):
+                _log(
+                    "centerBody: spacing invalido en la imagen de referencia; "
+                    "no se aplica el centrado"
+                )
+                return None
 
             # Matriz IJK->RAS local de la imagen de referencia. Puede ser
             # OBLICUA (rotacion + traslacion): es lo que ocurre con un CT
@@ -5523,6 +5641,7 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
                         body_array = np.asarray(arr)
                         body_geom_node = body_lm
                         body_node = body_lm
+                        body_labelmap_node = body_lm
                         segment_name = body_lm.GetName()
                         source = "labelmap"
                         # Si la CT de referencia comparte la misma geometria
@@ -5537,126 +5656,52 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
                     "imagen de referencia"
                 )
 
-            # --- 3) Punto objetivo a partir de dimensiones / spacing / matriz
-            #         IJK->RAS (robusto a matrices OBLICUAS) ---
-            shift_x = nx * _CENTER_X_COEF
-            shift_y = ny * dy / 2.0
-            shift_z = nz * dz / 2.0
-
-            r_loc = ijk_to_ras[:3, :3]
-            col_norm = np.linalg.norm(r_loc, axis=0)
-            # Eje +X local (columna 0 de la parte lineal) expresado en RAS.
-            unit_x_local = np.array([1.0, 0.0, 0.0], dtype=np.float64)
-            if col_norm[0] > 1e-12:
-                unit_x_local = r_loc[:, 0] / col_norm[0]
-            else:
-                _log(
-                    "centerBody: WARNING la columna X de la matriz IJK->RAS es "
-                    "degenerada; se usa el eje +X de RAS para la correccion"
-                )
-            # Centro del array en el frame local (RAS local de la imagen).
-            center_local = ijk_to_ras @ np.array(
-                [nx / 2.0, ny / 2.0, nz / 2.0, 1.0], dtype=np.float64
-            )
-
-            dx_valid = bool(np.isfinite(dx) and dx > 0.0)
-            if dx_valid:
-                delta_x = nx * _CENTER_X_COEF - nx * dx / 2.0
-            else:
-                delta_x = nx * _CENTER_X_COEF
-                _log(
-                    "centerBody: WARNING spacing dx invalido (%r); se usa "
-                    f"delta_x = N_x*_CENTER_X_COEF = {delta_x:.6g} sobre el "
-                    "centro del array"
-                )
-
-            # `center_local` ya es un punto RAS local (homogeneo). La correccion
-            # del factor X se expresa en mm sobre el eje +X local normalizado.
-            # Esta formulacion reproduce el caso alineado exactamente y es
-            # consistente tambien cuando la matriz IJK->RAS es oblicua.
-            target_local_v = center_local[:3] + delta_x * unit_x_local
-            if dx_valid and not np.isclose(col_norm[0], dx, rtol=1e-6, atol=1e-6):
-                _log(
-                    "centerBody: WARNING la norma de la columna X de la "
-                    f"matriz IJK->RAS ({col_norm[0]:.6g}) difiere del "
-                    f"spacing dx ({dx:.6g}); se usa el eje local normalizado "
-                    "para la correccion X"
-                )
-
-            # Indices IJK equivalentes del punto objetivo (solo informative).
-            try:
-                target_ijk = (
-                    np.linalg.inv(ijk_to_ras)
-                    @ np.array(
-                        [
-                            target_local_v[0],
-                            target_local_v[1],
-                            target_local_v[2],
-                            1.0,
-                        ],
-                        dtype=np.float64,
-                    )
-                )[:3]
-            except np.linalg.LinAlgError:
-                target_ijk = np.array([np.nan, np.nan, np.nan])
-
-            target_local = (
-                float(target_local_v[0]),
-                float(target_local_v[1]),
-                float(target_local_v[2]),
-            )
-
-            # --- Nodo transform de centrado (reutilizable) ---
-            transformNode = slicer.mrmlScene.GetFirstNodeByName(_NAME_CENTER_TRANSFORM)
-            if transformNode is not None and not transformNode.IsA(
-                "vtkMRMLLinearTransformNode"
-            ):
-                slicer.mrmlScene.RemoveNode(transformNode)
-                transformNode = None
-            if transformNode is None:
-                transformNode = slicer.mrmlScene.AddNewNodeByClass(
-                    "vtkMRMLLinearTransformNode", _NAME_CENTER_TRANSFORM
-                )
-
-            chain = self._transformChain(ref)
-            ct_index = None
-            for i, tnode in enumerate(chain):
-                if tnode.GetID() == transformNode.GetID():
-                    ct_index = i
-                    break
-
-            if ct_index is None:
-                # El transform se inserta entre el nodo y su padre directo:
-                # el padre canonico se conserva como padre del transform.
-                canonical_parent = chain[0] if chain else None
-                above = chain
-                below = []
-            else:
-                canonical_parent = (
-                    chain[ct_index + 1] if ct_index + 1 < len(chain) else None
-                )
-                above = chain[ct_index + 1 :]
-                below = chain[:ct_index]
-
-            # Punto objetivo en mundo, sin el efecto del transform de centrado
-            A = self._chainMatrix(above)
-            B = self._chainMatrix(below)
-            target_vec = np.array(
-                [target_local[0], target_local[1], target_local[2], 1.0],
+            # --- 3) Movimiento en RAS, calculado directamente en el mundo ---
+            # El desplazamiento solicitado es:
+            #   shift_x = N_x * 0.075, shift_y = N_y * dy / 2,
+            #   shift_z = N_z * dz / 2.
+            # El origen final de la imagen en RAS es (-shift_x, -shift_y,
+            # -shift_z). Se calcula el movimiento RESTANTE desde la posicion
+            # RAS actual; no se convierte LPS<->RAS ni se mezclan frames.
+            shift = np.array(
+                [nx * _CENTER_X_COEF, ny * dy / 2.0, nz * dz / 2.0],
                 dtype=np.float64,
             )
-            target_world = A @ (B @ target_vec)
+            desired_origin_world = -shift
+
+            ref_chain = self._transformChain(ref)
+            ref_world_matrix = self._chainMatrix(ref_chain)
+
+            origin_ras = np.asarray(ijk_to_ras[:3, 3], dtype=np.float64)
+            origin_world = (
+                ref_world_matrix[:3, :3] @ origin_ras
+                + ref_world_matrix[:3, 3]
+            )
+            movement_ras = desired_origin_world - origin_world
+
+            # --- Nodo transform de centrado (traslacion pura) ---
+            # El transform se usa para nodos VECTOR (segmentacion/modelos). Los
+            # volumenes raster NO se cuelgan de el: se desplazan ajustando la
+            # columna de traslacion de su matriz IJK->RAS, de modo que Slicer no
+            # tenga que re-muestrear el grid bajo una jerarquia transformada.
+            canonical_parent = ref_chain[0] if ref_chain else None
             try:
-                inv_lin = np.linalg.inv(A[:3, :3])
+                inv_parent_linear = np.linalg.inv(ref_world_matrix[:3, :3])
             except np.linalg.LinAlgError:
                 _log(
-                    "centerBody: la parte lineal del transform padre no es "
+                    "centerBody: la parte lineal del padre canonico no es "
                     "invertible; no se aplica el centrado"
                 )
                 return None
-            # Traslacion en el marco local del padre canonico
-            offset = -(inv_lin @ target_world[:3])
 
+            transformNode = slicer.mrmlScene.AddNewNodeByClass(
+                "vtkMRMLLinearTransformNode", _NAME_CENTER_TRANSFORM
+            )
+
+            # La matriz del nodo transform es EXACTAMENTE I | offset. `offset`
+            # esta expresado en el frame del padre canonico; el movimiento
+            # visible en RAS es `movement_ras`.
+            offset = inv_parent_linear @ movement_ras
             mat = vtk.vtkMatrix4x4()
             mat.Identity()
             mat.SetElement(0, 3, float(offset[0]))
@@ -5670,17 +5715,16 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
             transformNode.SetMatrixTransformToParent(mat)
 
             # --- Targets a mover ---
-            targets = []
-            if structureNode is not None:
-                targets.append(structureNode)
+            raster_targets = []
+            vector_targets = []
             if ref is not None:
-                targets.append(ref)
-            body_lm = self._findBodyLabelmap()
-            if body_lm is not None and source is not None:
-                targets.append(body_lm)
-            patient = slicer.mrmlScene.GetFirstNodeByName("Paciente")
-            if patient is not None:
-                targets.append(patient)
+                raster_targets.append(ref)
+            # El BODY puede venir de un labelmap externo cuyo nombre no usa
+            # el prefijo del modulo. Tambien es un raster y debe seguir a la CT.
+            if body_labelmap_node is not None:
+                raster_targets.append(body_labelmap_node)
+
+            # Labelmaps generados por el modulo.
             try:
                 collection = slicer.mrmlScene.GetNodesByClass(
                     "vtkMRMLLabelMapVolumeNode"
@@ -5693,48 +5737,148 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
                     if name.startswith(_PREFIX_INDIVIDUAL) or name.startswith(
                         _NAME_COMBINED
                     ):
-                        targets.append(node)
+                        raster_targets.append(node)
             except Exception:
                 pass
 
+            # Volumenes de dosis/KERMA ya existentes. Si se crean despues,
+            # createDoseVolume usa el origin local ya desplazado de la CT.
+            dose_prefixes = (
+                "Boron_Kerma",
+                "FastNeutron_Kerma",
+                "ThermalNeutron_Kerma",
+                "Gamma_Photon",
+                "Raw_Boro_PHITS",
+                "Raw_Fast_PHITS",
+                "Raw_Thermal_PHITS",
+                "Raw_Gamma_PHITS",
+                "Dosis_Final_BNCT",
+                "Dosis_Fisica_BNCT",
+                "Dosis_RBE_BNCT",
+                "Dosis_IsoE_BNCT",
+            )
+            try:
+                collection = slicer.mrmlScene.GetNodesByClass(
+                    "vtkMRMLScalarVolumeNode"
+                )
+                for i in range(collection.GetNumberOfItems()):
+                    node = collection.GetItemAsObject(i)
+                    if node is None:
+                        continue
+                    name = node.GetName() or ""
+                    if name.startswith(dose_prefixes):
+                        raster_targets.append(node)
+            except Exception:
+                pass
+
+            if structureNode is not None:
+                vector_targets.append(structureNode)
+            patient = slicer.mrmlScene.GetFirstNodeByName("Paciente")
+            if patient is not None:
+                vector_targets.append(patient)
+
             parent_id = (
-                canonical_parent.GetID() if canonical_parent is not None else None
+                canonical_parent.GetID() if canonical_parent is not None else ""
             )
             ct_id = transformNode.GetID()
             applied = 0
             skipped = []
             seen_ids = set()
-            for node in targets:
+
+            # Rasteres: se conserva exactamente la parte 3x3 de IJK->RAS y solo
+            # se modifica su columna de traslacion. El padre preexistente no se
+            # toca y el nodo no se cuelga del transform de centrado.
+            for node in raster_targets:
                 if node is None:
                     continue
-                try:
-                    nid = node.GetID()
-                except Exception:
-                    continue
+                nid = node.GetID()
                 if nid in seen_ids:
                     continue
                 seen_ids.add(nid)
                 name = node.GetName() or nid
-                # Nunca mover la geometria fija del simulador PHITS
                 if name in ("Conos_Pared_Reactor", "Cono"):
                     continue
-                node_chain = self._transformChain(node)
-                if any(t.GetID() == ct_id for t in node_chain):
-                    # Ya estaba bajo el transform de centrado: se mueve solo
-                    applied += 1
-                    continue
-                prev_parent_id = node.GetTransformNodeID()
-                if prev_parent_id != parent_id:
+                previous_matrix = self._ijkToRASMatrix(node)
+                if previous_matrix is None:
                     skipped.append(name)
                     continue
-                if prev_parent_id:
+                try:
+                    node_chain = self._transformChain(node)
+                    world = self._chainMatrix(node_chain)
+                    inverse_linear = np.linalg.inv(world[:3, :3])
+                except np.linalg.LinAlgError:
+                    skipped.append(name)
+                    continue
+
+                local_delta = inverse_linear @ movement_ras
+                centered_matrix = previous_matrix.copy()
+                centered_matrix[:3, 3] += local_delta
+                try:
+                    self._setIJKToRASMatrix(node, centered_matrix)
+                except Exception:
+                    skipped.append(name)
+                    continue
+
+                previous_parent = node.GetTransformNodeID() or ""
+                node.SetAttribute(_CENTER_ACTIVE_ATTRIBUTE, "1")
+                node.SetAttribute(_CENTER_KIND_ATTRIBUTE, "raster")
+                node.SetAttribute(
+                    _CENTER_PREV_MATRIX_ATTRIBUTE,
+                    json.dumps(previous_matrix.tolist()),
+                )
+                node.SetAttribute(_CENTER_PREV_PARENT_ATTRIBUTE, previous_parent)
+                applied += 1
+
+            # Vectores: el nodo transform T = I | offset es apropiado para
+            # segmentaciones y modelos. Se reutiliza el transform canonico para
+            # los nodos que comparten su padre; si el padre es distinto se crea
+            # un transform auxiliar bajo ese padre, tambien de traslacion pura.
+            for node in vector_targets:
+                if node is None:
+                    continue
+                nid = node.GetID()
+                if nid in seen_ids:
+                    continue
+                seen_ids.add(nid)
+                name = node.GetName() or nid
+                if name in ("Conos_Pared_Reactor", "Cono"):
+                    continue
+                previous_parent = node.GetTransformNodeID() or ""
+                target_transform_id = ct_id
+                if previous_parent != parent_id:
                     try:
-                        transformNode.SetNodeReferenceID(
-                            f"{_NAME_CENTER_TRANSFORM}_prev_{nid}", prev_parent_id
+                        vector_chain = self._transformChain(node)
+                        vector_parent = vector_chain[0] if vector_chain else None
+                        vector_world_matrix = self._chainMatrix(vector_chain)
+                        inverse_vector_linear = np.linalg.inv(
+                            vector_world_matrix[:3, :3]
                         )
-                    except Exception:
-                        pass
-                node.SetAndObserveTransformNodeID(ct_id)
+                    except np.linalg.LinAlgError:
+                        skipped.append(name)
+                        continue
+                    vector_offset = inverse_vector_linear @ movement_ras
+                    auxiliary_transform = slicer.mrmlScene.AddNewNodeByClass(
+                        "vtkMRMLLinearTransformNode",
+                        f"{_NAME_CENTER_TRANSFORM}_{nid}",
+                    )
+                    if vector_parent is not None:
+                        auxiliary_transform.SetAndObserveTransformNodeID(
+                            vector_parent.GetID()
+                        )
+                    auxiliary_matrix = vtk.vtkMatrix4x4()
+                    auxiliary_matrix.Identity()
+                    auxiliary_matrix.SetElement(0, 3, float(vector_offset[0]))
+                    auxiliary_matrix.SetElement(1, 3, float(vector_offset[1]))
+                    auxiliary_matrix.SetElement(2, 3, float(vector_offset[2]))
+                    auxiliary_transform.SetMatrixTransformToParent(auxiliary_matrix)
+                    target_transform_id = auxiliary_transform.GetID()
+                    node.SetAttribute(
+                        _CENTER_AUX_TRANSFORM_ATTRIBUTE, target_transform_id
+                    )
+                node.SetAttribute(_CENTER_ACTIVE_ATTRIBUTE, "1")
+                node.SetAttribute(_CENTER_KIND_ATTRIBUTE, "vector")
+                node.SetAttribute(_CENTER_PREV_PARENT_ATTRIBUTE, previous_parent)
+                node.SetAndObserveTransformNodeID(target_transform_id)
                 applied += 1
 
             if skipped:
@@ -5744,42 +5888,36 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
                 )
 
             # --- Bounds finales (RAS mundo) post-transform ---
-            mat_np = np.asarray(
-                slicer.util.arrayFromVTKMatrix(mat), dtype=np.float64
-            ).reshape((4, 4))
-
-            # Imagen de referencia (post-transform). El AABB local se obtiene
-            # desde las esquinas IJK reales para no asumir ejes RAS alineados.
+            final_ijk_to_ras = self._ijkToRASMatrix(ref)
+            if final_ijk_to_ras is None:
+                final_ijk_to_ras = ijk_to_ras
             image_bounds_local = self._volumeBoundsLocalRAS(
-                ijk_to_ras, nx, ny, nz
+                final_ijk_to_ras, nx, ny, nz
             )
-            image_chain = self._chainMatrix(
-                self._transformChain(ref),
-                overrideNode=transformNode,
-                overrideMat=mat_np,
-            )
+            image_chain = self._chainMatrix(self._transformChain(ref))
             image_bounds = self._boundsFromLocal(image_bounds_local, image_chain)
 
             # BODY (post-transform). El tight bbox se usa SOLO para reportar
-            # los bounds finales: ya no participa en el calculo del offset.
+            # los bounds finales: no participa en el calculo del movimiento.
             bounds_local = None
             final_bounds = None
             if body_array is not None and body_geom_node is not None:
-                bounds_local, _ = self._bodyTightBoundsRAS(
-                    body_array, body_geom_node
-                )
+                bounds_local, _ = self._bodyTightBoundsRAS(body_array, body_node)
                 if bounds_local is not None:
-                    body_chain = self._chainMatrix(
-                        self._transformChain(body_node),
-                        overrideNode=transformNode,
-                        overrideMat=mat_np,
-                    )
+                    body_chain = self._chainMatrix(self._transformChain(body_node))
                     final_bounds = self._boundsFromLocal(bounds_local, body_chain)
+
+            final_origin = tuple(float(v) for v in ref.GetOrigin())
+            final_world_matrix = self._chainMatrix(self._transformChain(ref))
+            final_origin_world = (
+                final_world_matrix[:3, :3] @ np.asarray(final_origin)
+                + final_world_matrix[:3, 3]
+            )
 
             _log(
                 f"centerBody: imagen '{ref.GetName()}' dims={dims} "
-                f"spacing={(dx, dy, dz)} offset="
-                f"{tuple(float(v) for v in offset)} nodos movidos={applied} "
+                f"spacing={(dx, dy, dz)} movimiento_RAS="
+                f"{tuple(float(v) for v in movement_ras)} nodos movidos={applied} "
                 f"oblicua={not axis_aligned}"
             )
 
@@ -5790,9 +5928,14 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
                     float(offset[2]),
                 ),
                 "offset_world": (
-                    float(-target_world[0]),
-                    float(-target_world[1]),
-                    float(-target_world[2]),
+                    float(movement_ras[0]),
+                    float(movement_ras[1]),
+                    float(movement_ras[2]),
+                ),
+                "movement_ras": (
+                    float(movement_ras[0]),
+                    float(movement_ras[1]),
+                    float(movement_ras[2]),
                 ),
                 "bounds": final_bounds,
                 "bounds_local": bounds_local,
@@ -5805,28 +5948,30 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
                     float(origin[1]),
                     float(origin[2]),
                 ),
-                "shift": (float(shift_x), float(shift_y), float(shift_z)),
-                "target_local": target_local,
-                "target_ijk": (
-                    float(target_ijk[0]),
-                    float(target_ijk[1]),
-                    float(target_ijk[2]),
+                "origin_after": final_origin,
+                "origin_world_after": (
+                    float(final_origin_world[0]),
+                    float(final_origin_world[1]),
+                    float(final_origin_world[2]),
+                ),
+                "shift": (
+                    float(shift[0]),
+                    float(shift[1]),
+                    float(shift[2]),
                 ),
                 "target_world": (
-                    float(target_world[0]),
-                    float(target_world[1]),
-                    float(target_world[2]),
+                    float(desired_origin_world[0]),
+                    float(desired_origin_world[1]),
+                    float(desired_origin_world[2]),
                 ),
                 "ijk_to_ras": [
+                    [float(v) for v in row]
+                    for row in np.asarray(final_ijk_to_ras)
+                ],
+                "ijk_to_ras_before": [
                     [float(v) for v in row] for row in np.asarray(ijk_to_ras)
                 ],
                 "axis_aligned": bool(axis_aligned),
-                "delta_x": float(delta_x),
-                "unit_x_local": (
-                    float(unit_x_local[0]),
-                    float(unit_x_local[1]),
-                    float(unit_x_local[2]),
-                ),
                 "body_found": bool(body_array is not None),
                 "n_nodes": applied,
                 "transform_name": _NAME_CENTER_TRANSFORM,
@@ -5837,22 +5982,25 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
             }
         except Exception:
             _log("centerBody: error:\n" + traceback.format_exc())
+            # Deja la escena en el estado previo si una parte del centrado fallo.
+            try:
+                self.uncenterBody()
+            except Exception:
+                pass
             return None
 
     def uncenterBody(self):
-        """Quita el transform de centrado a los nodos que lo usan y lo elimina.
+        """Deshace exactamente el centrado y restaura la geometria previa.
 
-        Devuelve el numero de nodos liberados.
+        Los rasters recuperan su matriz IJK->RAS y su padre anteriores; los
+        vectores recuperan su transform padre. La restauracion usa atributos
+        MRML guardados en cada nodo, por lo que tambien funciona si el nodo
+        transform fue eliminado manualmente. Es idempotente.
         """
         import traceback
 
-        transformNode = slicer.mrmlScene.GetFirstNodeByName(_NAME_CENTER_TRANSFORM)
-        if transformNode is None:
-            _log("uncenterBody: no existe el transform de centrado")
-            return 0
-
-        ct_id = transformNode.GetID()
         released = 0
+        auxiliary_transform_ids = set()
         try:
             nodes = slicer.mrmlScene.GetNodes()
             for i in range(nodes.GetNumberOfItems()):
@@ -5860,21 +6008,81 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
                 if node is None:
                     continue
                 try:
-                    if node.GetTransformNodeID() != ct_id:
-                        continue
+                    active = node.GetAttribute(_CENTER_ACTIVE_ATTRIBUTE)
                 except Exception:
                     continue
-                # Restaurar el transform padre original (guardado al centrar)
-                prev_id = None
-                try:
-                    prev_id = transformNode.GetNodeReferenceID(
-                        f"{_NAME_CENTER_TRANSFORM}_prev_{node.GetID()}"
+                if active != "1":
+                    continue
+
+                kind = node.GetAttribute(_CENTER_KIND_ATTRIBUTE) or ""
+                previous_parent = (
+                    node.GetAttribute(_CENTER_PREV_PARENT_ATTRIBUTE) or ""
+                )
+                if kind == "raster":
+                    previous_matrix_json = node.GetAttribute(
+                        _CENTER_PREV_MATRIX_ATTRIBUTE
                     )
+                    if previous_matrix_json:
+                        try:
+                            previous_matrix = np.asarray(
+                                json.loads(previous_matrix_json), dtype=np.float64
+                            ).reshape((4, 4))
+                            self._setIJKToRASMatrix(node, previous_matrix)
+                        except Exception:
+                            _log(
+                                "uncenterBody: no se pudo restaurar la matriz "
+                                f"IJK->RAS de '{node.GetName()}'"
+                            )
+                node.SetAndObserveTransformNodeID(previous_parent or None)
+                try:
+                    auxiliary_id = node.GetAttribute(
+                        _CENTER_AUX_TRANSFORM_ATTRIBUTE
+                    )
+                    if auxiliary_id:
+                        auxiliary_transform_ids.add(auxiliary_id)
                 except Exception:
-                    prev_id = None
-                node.SetAndObserveTransformNodeID(prev_id if prev_id else None)
+                    pass
+                node.RemoveAttribute(_CENTER_ACTIVE_ATTRIBUTE)
+                node.RemoveAttribute(_CENTER_KIND_ATTRIBUTE)
+                node.RemoveAttribute(_CENTER_PREV_MATRIX_ATTRIBUTE)
+                node.RemoveAttribute(_CENTER_PREV_PARENT_ATTRIBUTE)
+                node.RemoveAttribute(_CENTER_AUX_TRANSFORM_ATTRIBUTE)
                 released += 1
-            slicer.mrmlScene.RemoveNode(transformNode)
+
+            for auxiliary_id in auxiliary_transform_ids:
+                auxiliary_node = slicer.mrmlScene.GetNodeByID(auxiliary_id)
+                if auxiliary_node is not None:
+                    slicer.mrmlScene.RemoveNode(auxiliary_node)
+
+            # Compatibilidad con transformes creados por la version anterior:
+            # esos nodos no tienen atributos y usan referencias en el transform.
+            transformNode = slicer.mrmlScene.GetFirstNodeByName(
+                _NAME_CENTER_TRANSFORM
+            )
+            if transformNode is not None:
+                ct_id = transformNode.GetID()
+                for i in range(nodes.GetNumberOfItems()):
+                    node = nodes.GetItemAsObject(i)
+                    if node is None:
+                        continue
+                    try:
+                        if node.GetTransformNodeID() != ct_id:
+                            continue
+                    except Exception:
+                        continue
+                    previous_parent = ""
+                    try:
+                        previous_parent = (
+                            transformNode.GetNodeReferenceID(
+                                f"{_NAME_CENTER_TRANSFORM}_prev_{node.GetID()}"
+                            )
+                            or ""
+                        )
+                    except Exception:
+                        previous_parent = ""
+                    node.SetAndObserveTransformNodeID(previous_parent or None)
+                    released += 1
+                slicer.mrmlScene.RemoveNode(transformNode)
         except Exception:
             _log("uncenterBody: error:\n" + traceback.format_exc())
         _log(f"uncenterBody: {released} nodos liberados")
@@ -6041,20 +6249,48 @@ class BNCTLogic(ScriptedLoadableModuleLogic):
             # Copiar la orientacion IJK->RAS escalando cada columna por el nuevo spacing
             mat = vtk.vtkMatrix4x4()
             maskNode.GetIJKToRASMatrix(mat)
-            out = vtk.vtkMatrix4x4()
+            mat_np = np.asarray(
+                slicer.util.arrayFromVTKMatrix(mat), dtype=np.float64
+            ).reshape((4, 4))
+            out_np = mat_np.copy()
+            column_scales = [1.0, 1.0, 1.0]
             for c in range(3):
-                col = [mat.GetElement(r, c) for r in range(3)]
+                col = mat_np[:3, c]
                 norm = float(np.linalg.norm(col))
                 scale = (new_spacing_zyx[2 - c] / norm) if norm > 0 else 1.0
-                for r in range(3):
-                    out.SetElement(r, c, col[r] * scale)
-            for r in range(4):
-                out.SetElement(r, 3, mat.GetElement(r, 3))
-            node.SetIJKToRASMatrix(out)
+                column_scales[c] = scale
+                out_np[:3, c] = col * scale
+            self._setIJKToRASMatrix(node, out_np)
 
             tid = maskNode.GetTransformNodeID()
             if tid:
                 node.SetAndObserveTransformNodeID(tid)
+
+            # Si la mascara de origen ya estaba centrada, el resultado tambien
+            # nace desplazado. Registrar su matriz previa (con el mismo
+            # escalado de columnas) permite restaurarlo exactamente al quitar
+            # el centrado.
+            try:
+                if maskNode.GetAttribute(_CENTER_ACTIVE_ATTRIBUTE) == "1":
+                    previous_matrix_json = maskNode.GetAttribute(
+                        _CENTER_PREV_MATRIX_ATTRIBUTE
+                    )
+                    if previous_matrix_json:
+                        previous_matrix = np.asarray(
+                            json.loads(previous_matrix_json), dtype=np.float64
+                        ).reshape((4, 4))
+                        previous_out = previous_matrix.copy()
+                        for c in range(3):
+                            previous_out[:3, c] = (
+                                previous_matrix[:3, c] * column_scales[c]
+                            )
+                        self._markCenteredRaster(
+                            node,
+                            previous_out,
+                            node.GetTransformNodeID() or "",
+                        )
+            except Exception:
+                pass
 
             node.CreateDefaultDisplayNodes()
             try:
